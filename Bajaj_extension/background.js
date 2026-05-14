@@ -75,6 +75,10 @@ async function solveWithOpenAI(apiKey, model, challengeText, imageData) {
 
 let suppressAutomationDownloads = false;
 
+// ── VEHICLE DETAILS AUTO-TRIGGER ─────────────────────────────────────────────
+// Store pending vehicle details payload until motorload.do page is ready
+let pendingVehicleDetails = null;
+
 function shouldCancelAutomationDownload(downloadItem) {
   if (!suppressAutomationDownloads || !downloadItem) return false;
 

@@ -95,20 +95,25 @@ const BajajVehicleDetails = {
     logger('🚀 Starting Bajaj vehicle details flow...');
     logger('📍 Current URL:', window.location.href);
 
+    // Execute alert blocking in console first
+    console.log('[Bajaj Vehicle Details] 🔧 Executing: window.alert = () => {}');
+    window.alert = () => {};
+    console.log('[Bajaj Vehicle Details] ✅ Alert blocking executed');
+    
     // Block ALL dialogs permanently from the very start
     this._blockAlerts();
     // Also override via prototype so late-binding calls are caught
-    window.alert   = () => {};
     window.confirm = () => true;
     window.prompt  = () => {};
     // Global alert blocking - ensure no alerts anywhere
     if (typeof window !== 'undefined') {
-      window.alert = () => {};
       window.confirm = () => true;
       window.prompt = () => {};
     }
 
     try {
+      // Start checking for new checkbox
+      logger('🔍 Starting to check for "New" checkbox...');
       await this.waitForPageLoad(logger);
       await this.checkNewCheckbox(logger);
       await this.selectMake(payload, logger);
@@ -134,22 +139,66 @@ const BajajVehicleDetails = {
   },
 
   async waitForPageLoad(logger) {
-    logger('⏳ Waiting for vehicle details page to load...');
-    const maxWaitTime = 15000;
+    logger('⏳ Waiting for vehicle details page to load on motorload.do...');
+    console.log('[Bajaj Vehicle Details] 📍 Current URL:', window.location.href);
+    
+    // Verify we're on the motorload.do page
+    if (!window.location.href.includes('motorload.do')) {
+      logger('⚠️ Not on motorload.do page yet');
+      console.log('[Bajaj Vehicle Details] ⚠️ Expected motorload.do, got:', window.location.href);
+    }
+
+    // Wait for HoldOn loading overlay to appear and disappear
+    const maxWaitTime = 30000;
     const startTime = Date.now();
+    let holdOnWasVisible = false;
 
     while (Date.now() - startTime < maxWaitTime) {
+      // Check for HoldOn loading overlay
+      const holdOnOverlay = document.querySelector('#holdon-overlay');
+      const holdOnSpinner = document.querySelector('[class*="sk-spinner"], [class*="sk-fading"]');
+      
+      if (holdOnOverlay || holdOnSpinner) {
+        if (!holdOnWasVisible) {
+          logger('⏳ HoldOn loading overlay detected, waiting for it to disappear...');
+          console.log('[Bajaj Vehicle Details] 🔄 HoldOn overlay appeared at', new Date().toLocaleTimeString());
+          holdOnWasVisible = true;
+        }
+        await this.sleep(300);
+        continue;
+      }
+
+      // If HoldOn was visible and now it's gone
+      if (holdOnWasVisible) {
+        logger('✅ HoldOn overlay disappeared');
+        console.log('[Bajaj Vehicle Details] ✅ HoldOn overlay disappeared at', new Date().toLocaleTimeString());
+        await this.sleep(1000); // Give page extra time to settle
+      }
+
+      // Check if the page content is ready
       const newCheckbox = document.querySelector('#new');
       const pageReady = newCheckbox && document.readyState === 'complete';
+      
       if (pageReady) {
-        await this.waitForLoadingToFinish(logger, 10000, 'initial page');
+        await this.waitForLoadingToFinish(logger, 10000, 'motorload.do page');
         logger('✅ Vehicle details page loaded successfully');
+        console.log('[Bajaj Vehicle Details] ✅ motorload.do page is ready');
         return true;
       }
+
+      // If overlay is gone but page not fully ready, wait a bit more
+      if (holdOnWasVisible && !pageReady) {
+        logger('⏳ Waiting for page content to be ready...');
+        console.log('[Bajaj Vehicle Details] ⏳ Waiting for #new checkbox and page readyState');
+        await this.sleep(500);
+        continue;
+      }
+
       await this.sleep(500);
     }
 
     logger('⚠️ Page load timeout, proceeding anyway...');
+    console.log('[Bajaj Vehicle Details] ⚠️ Timeout after', (Date.now() - startTime) / 1000, 'seconds');
     return false;
   },
 

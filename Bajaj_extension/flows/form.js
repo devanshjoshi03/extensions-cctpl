@@ -60,19 +60,45 @@ const BajajForm = {
       console.log('[Bajaj Form] ✅ Form flow completed successfully');
       logger('✅ Form flow completed successfully');
       
-      // Wait for "New" checkbox to appear, then trigger vehicle details
-      console.log('[Bajaj Form] ⏳ Waiting for "New" checkbox to appear...');
-      logger('⏳ Waiting for "New" checkbox to appear...');
-      await this.waitForElement('#new', 15000); // Wait up to 15 seconds for New checkbox
+      // Wait for page to navigate to motorload.do after Proceed is clicked
+      console.log('[Bajaj Form] ⏳ Waiting for page to navigate to motorload.do...');
+      logger('⏳ Waiting for page navigation to motorload.do...');
       
-      console.log('[Bajaj Form] ✅ "New" checkbox found, triggering vehicle details flow...');
-      logger('✅ "New" checkbox found, triggering vehicle details flow...');
-      // Trigger vehicle details flow via message to content script
-      console.log('[Bajaj Form] 📨 Sending START_VEHICLE_DETAILS message...');
-      chrome.runtime.sendMessage({ 
-        action: 'START_VEHICLE_DETAILS', 
-        payload: payload 
-      });
+      const maxWaitNav = 30000;
+      const startNavTime = Date.now();
+      let navigated = false;
+      
+      while (Date.now() - startNavTime < maxWaitNav) {
+        if (window.location.href.includes('motorload.do')) {
+          console.log('[Bajaj Form] ✅ Page navigated to motorload.do');
+          logger('✅ Page navigated to motorload.do');
+          navigated = true;
+          break;
+        }
+        await this.sleep(500);
+      }
+      
+      if (navigated) {
+        // Wait a bit for page to load
+        console.log('[Bajaj Form] ⏳ Waiting for motorload.do page to load...');
+        await this.sleep(2000);
+        
+        console.log('[Bajaj Form] ✅ motorload.do page loaded, triggering vehicle details flow...');
+        logger('✅ motorload.do page loaded, triggering vehicle details flow...');
+        // Trigger vehicle details flow via message to content script
+        console.log('[Bajaj Form] 📨 Sending START_VEHICLE_DETAILS message...');
+        chrome.runtime.sendMessage({ 
+          action: 'START_VEHICLE_DETAILS', 
+          payload: payload 
+        });
+      } else {
+        console.log('[Bajaj Form] ⚠️ Navigation timeout, sending START_VEHICLE_DETAILS anyway');
+        logger('⚠️ Navigation timeout, sending message anyway');
+        chrome.runtime.sendMessage({ 
+          action: 'START_VEHICLE_DETAILS', 
+          payload: payload 
+        });
+      }
       
       console.log('[Bajaj Form] 🎉 Form flow completed and vehicle details triggered');
       return { success: true };

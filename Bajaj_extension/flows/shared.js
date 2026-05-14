@@ -812,6 +812,7 @@ const AutomationPauseController = {
     state.inputSnapshot = this.captureInputSnapshot();
     this._saveState(state); this._updateUI();
     console.log('%c[Automation] ⏸️ PAUSED at: ' + state.currentStep, 'color:#e53935;font-weight:bold;font-size:14px;');
+    console.log('[Bajaj Automation] 🔴 Pause executed at step:', state.currentStep);
   },
 
   resume() {
@@ -821,11 +822,13 @@ const AutomationPauseController = {
       if (edits.length > 0) {
         state.adminEditedFields = [...new Set([...(state.adminEditedFields || []), ...edits])];
         console.log('%c[Automation] 🛡️ Protected fields: ' + edits.join(', '), 'color:#ffd166;font-weight:bold;');
+        console.log('[Bajaj Automation] 🛡️ Protected fields detected:', edits);
       }
     }
     state.isPaused = false; state.pausedAtTimestamp = null; state.inputSnapshot = {};
     this._saveState(state); this._updateUI();
     console.log('%c[Automation] ▶️ RESUMED from: ' + state.currentStep, 'color:#2d6a4f;font-weight:bold;font-size:14px;');
+    console.log('[Bajaj Automation] 🟢 Resume executed from step:', state.currentStep);
   },
 
   isFieldProtected(fieldIdOrName) {
@@ -882,6 +885,7 @@ const AutomationPauseController = {
     state.isStopped = true; state.isPaused = false; state.isRunning = false; state.currentStep = 'Stopped ⛔';
     this._saveState(state); this._updateUI();
     console.log('%c[Automation] ⛔ STOPPED permanently', 'color:#ff0000;font-weight:bold;font-size:16px;');
+    console.log('[Bajaj Automation] 🛑 Stop executed - automation stopped permanently');
   },
 
   reset() { sessionStorage.removeItem(this.STORAGE_KEY); this._updateUI(); },
@@ -944,7 +948,7 @@ const AutomationPauseController = {
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
         <span id="sompo-auto-badge" style="background:#555;color:white;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:0.5px;">💤 Idle</span>
         <div style="display:flex;align-items:center;gap:8px;">
-          <span style="font-size:10px;color:#888;">Sompo Auto</span>
+          <span style="font-size:10px;color:#888;">Bajaj Insurance</span>
           <button id="sompo-auto-close-btn" type="button" aria-label="Close automation panel" style="width:24px;height:24px;border:1px solid rgba(255,255,255,0.18);border-radius:999px;background:rgba(255,255,255,0.08);color:#f5f5f5;font-size:12px;font-weight:700;line-height:1;cursor:pointer;">X</button>
         </div>
       </div>

@@ -241,31 +241,66 @@
     if (msg.action === 'START_VEHICLE_DETAILS') {
       log('📨 Received START_VEHICLE_DETAILS');
       log('📍 Current URL:', window.location.href);
+      console.log('[Bajaj Content] 📨 START_VEHICLE_DETAILS message received');
+      console.log('[Bajaj Content] 📍 Current URL:', window.location.href);
       sendResponse({ status: 'started' });
 
       (async () => {
         try {
-          // Check if already on motorload.do - if so, run vehicle details directly
+          // Check if we're on motorload.do
           if (window.location.href.includes('motorload.do')) {
-            log('✅ Already on vehicle details page, running vehicle details flow directly...');
+            log('✅ Already on motorload.do, running vehicle details flow directly...');
+            console.log('[Bajaj Content] ✅ On motorload.do, starting vehicle details flow immediately');
             const result = await runBajajVehicleDetailsFlow(msg.payload);
+            console.log('[Bajaj Content] ✅ Vehicle details flow completed:', result);
             chrome.runtime.sendMessage({ 
               action: 'FLOW_RESULT', 
               result, 
               payload: msg.payload 
             });
           } else {
-            log('⚠️ Not on motorload.do page, but received START_VEHICLE_DETAILS message');
-            log('ℹ️ Current page:', window.location.href);
-            const result = { success: false, error: 'Not on vehicle details page (motorload.do)' };
-            chrome.runtime.sendMessage({ 
-              action: 'FLOW_RESULT', 
-              result, 
-              payload: msg.payload 
-            });
+            // Wait for page to navigate to motorload.do
+            log('⏳ Not on motorload.do yet, waiting for navigation...');
+            console.log('[Bajaj Content] ⏳ Not on motorload.do, waiting for navigation from:', window.location.href);
+            
+            const maxWait = 20000;
+            const startTime = Date.now();
+            
+            while (Date.now() - startTime < maxWait) {
+              if (window.location.href.includes('motorload.do')) {
+                log('✅ Successfully navigated to motorload.do');
+                console.log('[Bajaj Content] ✅ Navigation detected to motorload.do');
+                await sleep(2000); // Give page time to load content
+                break;
+              }
+              await sleep(500);
+            }
+            
+            // Now run vehicle details
+            if (window.location.href.includes('motorload.do')) {
+              log('✅ Running vehicle details flow on motorload.do...');
+              console.log('[Bajaj Content] 🚀 Starting vehicle details flow');
+              const result = await runBajajVehicleDetailsFlow(msg.payload);
+              console.log('[Bajaj Content] ✅ Vehicle details flow completed:', result);
+              chrome.runtime.sendMessage({ 
+                action: 'FLOW_RESULT', 
+                result, 
+                payload: msg.payload 
+              });
+            } else {
+              log('❌ Failed to navigate to motorload.do');
+              console.log('[Bajaj Content] ❌ Still not on motorload.do:', window.location.href);
+              const result = { success: false, error: 'Failed to navigate to vehicle details page (motorload.do)' };
+              chrome.runtime.sendMessage({ 
+                action: 'FLOW_RESULT', 
+                result, 
+                payload: msg.payload 
+              });
+            }
           }
         } catch (e) {
           log('❌ Vehicle details error:', e.message);
+          console.error('[Bajaj Content] ❌ Vehicle details error:', e);
           chrome.runtime.sendMessage({ 
             action: 'FLOW_RESULT', 
             result: { success: false, error: e.message }, 
@@ -360,21 +395,45 @@
     }
 
     if (msg.action === 'PAUSE_AUTOMATION') {
+      log('⏸️ PAUSE_AUTOMATION command received');
+      console.log('[Bajaj Content] 🔴 Pause automation command received');
       if (typeof AutomationPauseController !== 'undefined') {
-        AutomationPauseController.pause(); sendResponse({ status: 'paused' });
-      } else { sendResponse({ status: 'error', error: 'Controller not loaded' }); }
+        AutomationPauseController.pause();
+        log('✅ Automation paused by user');
+        console.log('[Bajaj Content] ✅ Automation paused');
+        sendResponse({ status: 'paused', message: 'Automation paused successfully' });
+      } else {
+        log('❌ AutomationPauseController not available');
+        sendResponse({ status: 'error', error: 'Controller not loaded' });
+      }
       return true;
     }
     if (msg.action === 'RESUME_AUTOMATION') {
+      log('▶️ RESUME_AUTOMATION command received');
+      console.log('[Bajaj Content] 🟢 Resume automation command received');
       if (typeof AutomationPauseController !== 'undefined') {
-        AutomationPauseController.resume(); sendResponse({ status: 'resumed' });
-      } else { sendResponse({ status: 'error', error: 'Controller not loaded' }); }
+        AutomationPauseController.resume();
+        log('✅ Automation resumed by user');
+        console.log('[Bajaj Content] ✅ Automation resumed');
+        sendResponse({ status: 'resumed', message: 'Automation resumed successfully' });
+      } else {
+        log('❌ AutomationPauseController not available');
+        sendResponse({ status: 'error', error: 'Controller not loaded' });
+      }
       return true;
     }
     if (msg.action === 'STOP_AUTOMATION') {
+      log('⛔ STOP_AUTOMATION command received');
+      console.log('[Bajaj Content] 🛑 Stop automation command received');
       if (typeof AutomationPauseController !== 'undefined') {
-        AutomationPauseController.stop(); sendResponse({ status: 'stopped' });
-      } else { sendResponse({ status: 'error', error: 'Controller not loaded' }); }
+        AutomationPauseController.stop();
+        log('✅ Automation stopped by user');
+        console.log('[Bajaj Content] ✅ Automation stopped');
+        sendResponse({ status: 'stopped', message: 'Automation stopped successfully' });
+      } else {
+        log('❌ AutomationPauseController not available');
+        sendResponse({ status: 'error', error: 'Controller not loaded' });
+      }
       return true;
     }
     if (msg.action === 'GET_AUTOMATION_STATUS') {
@@ -403,4 +462,24 @@
   }
 
   log('ℹ️ Bajaj Extension ready - login flow available');
+
+  // Auto-trigger vehicle details if on motorload.do page
+  if (window.location.href.includes('motorload.do')) {
+    log('🔍 Detected motorload.do page, checking for auto-trigger...');
+    console.log('[Bajaj Content] 🔍 motorload.do detected - will auto-trigger if form flow just completed');
+    
+    // Wait for page to be ready
+    (async () => {
+      await sleep(1500);
+      
+      // Check if this is a fresh page load after form completion
+      // (typically happens right after Proceed button click)
+      const pageReadyCheck = document.readyState === 'complete' || document.readyState === 'interactive';
+      
+      if (pageReadyCheck) {
+        log('ℹ️ motorload.do page is ready, will auto-start if triggered by form flow');
+        console.log('[Bajaj Content] ℹ️ motorload.do page ready - waiting for explicit message or timeout');
+      }
+    })();
+  }
 })();
