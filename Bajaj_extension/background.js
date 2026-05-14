@@ -76,8 +76,64 @@ async function solveWithOpenAI(apiKey, model, challengeText, imageData) {
 let suppressAutomationDownloads = false;
 
 // ── VEHICLE DETAILS AUTO-TRIGGER ─────────────────────────────────────────────
-// Store pending vehicle details payload until motorload.do page is ready
+// BajajForm runs on login.do; clicking Proceed does a full navigation to motorload.do.
+// That tears down the content script before it can finish in-tab work. Form flow
+// therefore sends START_VEHICLE_DETAILS here; we queue it and relay via
+// chrome.tabs.sendMessage after motorload.do finishes loading (content script alive).
 let pendingVehicleDetails = null;
+
+const PENDING_VEHICLE_MAX_MS = 120000;
+
+function clearStalePendingVehicleDetails() {
+  if (!pendingVehicleDetails) return;
+  const t = pendingVehicleDetails.enqueuedAt || 0;
+  if (Date.now() - t > PENDING_VEHICLE_MAX_MS) {
+    console.log('[BG] Clearing stale pendingVehicleDetails');
+    pendingVehicleDetails = null;
+  }
+}
+
+function pendingVehicleDetailsSummary() {
+  if (!pendingVehicleDetails) return 'null';
+  const p = pendingVehicleDetails.payload;
+  let payloadKeys = [];
+  try {
+    payloadKeys = p && typeof p === 'object' ? Object.keys(p) : [];
+  } catch (_) {}
+  return JSON.stringify({
+    tabId: pendingVehicleDetails.tabId,
+    enqueuedAt: pendingVehicleDetails.enqueuedAt,
+    payloadKeys,
+  });
+}
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  const u = tab?.url ? String(tab.url) : '';
+  if (u.includes('bajajgeneral.com')) {
+    console.log('[BG] tabs.onUpdated:', tabId, changeInfo.status, u);
+    console.log('[BG] pendingVehicleDetails:', pendingVehicleDetailsSummary());
+  }
+
+  if (changeInfo.status !== 'complete' || !tab?.url) return;
+  clearStalePendingVehicleDetails();
+  if (!pendingVehicleDetails || pendingVehicleDetails.tabId !== tabId) return;
+  if (!String(tab.url).includes('motorload.do')) return;
+
+  const { payload } = pendingVehicleDetails;
+  pendingVehicleDetails = null;
+
+  const delayMs = 1500;
+  console.log('[BG] motorload.do load complete — relaying START_VEHICLE_DETAILS in', delayMs, 'ms');
+  setTimeout(() => {
+    chrome.tabs.sendMessage(tabId, { action: 'START_VEHICLE_DETAILS', payload }, (resp) => {
+      if (chrome.runtime.lastError) {
+        console.error('[BG] Relay START_VEHICLE_DETAILS failed:', chrome.runtime.lastError.message);
+        return;
+      }
+      console.log('[BG] START_VEHICLE_DETAILS relayed:', resp);
+    });
+  }, delayMs);
+});
 
 function shouldCancelAutomationDownload(downloadItem) {
   if (!suppressAutomationDownloads || !downloadItem) return false;
@@ -98,6 +154,30 @@ if (chrome.downloads?.onCreated) {
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+
+  if (msg.action === 'START_VEHICLE_DETAILS') {
+    const tabId = sender.tab?.id;
+    if (tabId == null) {
+      sendResponse({ status: 'error', error: 'START_VEHICLE_DETAILS must be sent from a content script (tab)' });
+      return true;
+    }
+    const url = String(sender.tab.url || '');
+    console.log('[BG] START_VEHICLE_DETAILS from tab', tabId, 'url:', url);
+    if (url.includes('motorload.do')) {
+      console.log('[BG] Already on motorload.do — scheduling tabs.sendMessage relay');
+      setTimeout(() => {
+        chrome.tabs.sendMessage(tabId, { action: 'START_VEHICLE_DETAILS', payload: msg.payload }, () => {
+          void chrome.runtime.lastError;
+        });
+      }, 500);
+      sendResponse({ status: 'relay_scheduled' });
+      return true;
+    }
+    pendingVehicleDetails = { payload: msg.payload, tabId, enqueuedAt: Date.now() };
+    console.log('[BG] START_VEHICLE_DETAILS queued for tab', tabId, '(wait for motorload.do)', '| pending:', pendingVehicleDetailsSummary());
+    sendResponse({ status: 'queued' });
+    return true;
+  }
 
   if (msg.action === 'SET_DOWNLOAD_SUPPRESSION') {
     suppressAutomationDownloads = Boolean(msg.enabled);
@@ -520,6 +600,7 @@ if (proceedBtn) {
                    );
 
   if (closeBtn) {
+    window.alert = () => {};
     closeBtn.click();
     console.log('[KYC] ✅ Clicked "Close" button');
     await sleep(1000);

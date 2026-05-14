@@ -211,7 +211,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     addLog('✅ Credentials verified', '#00ff7f');
-    chrome.storage.local.set({ bajajJSON: raw, bajajPayload: payload });
+    const storageBase = { bajajJSON: raw, bajajPayload: payload };
 
     const tab = await getActiveTab();
     addLog('📍 Active tab URL: ' + (tab?.url || 'unknown'), '#888888');
@@ -228,6 +228,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const isOnVehicleDetailsPage = tab.url && tab.url.includes('portal.bajajgeneral.com/BagicNxt/partner/motorload.do');
 
     if (!isOnBajajPortal) {
+      chrome.storage.local.set(storageBase);
       addLog('🔄 Not on Bajaj portal, navigating...', '#ffc107');
       showStatus('🔄 Navigating to Bajaj portal...', 'info');
       await chrome.tabs.update(tab.id, { url: 'https://portal.bajajgeneral.com/BagicNxt/plogin.jsp' });
@@ -245,6 +246,10 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (isOnVehicleDetailsPage) {
       addLog('🚗 On vehicle details page (motorload.do), starting vehicle details automation...', '#00d4ff');
       showStatus('🚀 Starting vehicle details automation...', 'info');
+      chrome.storage.local.set({
+        ...storageBase,
+        bajajPendingVehicleAfterForm: false,
+      });
       // Use START_VEHICLE_DETAILS for vehicle details automation
       chrome.tabs.sendMessage(tab.id, { action: 'START_VEHICLE_DETAILS', payload }, (resp) => {
         if (chrome.runtime.lastError) { showStatus('❌ Reload the page and retry', 'error'); addLog('❌ Message error: ' + chrome.runtime.lastError.message, '#ff4757'); }
@@ -254,15 +259,26 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (isOnPartnerPage) {
       addLog('📋 On partner page (login.do), starting form automation...', '#00d4ff');
       showStatus('🚀 Starting form automation...', 'info');
+      // After Proceed → full navigation to motorload.do, content script is recreated.
+      // Flag + timestamp so motorload.do autostart can run vehicle details with this payload.
+      chrome.storage.local.set({
+        ...storageBase,
+        bajajPendingVehicleAfterForm: true,
+        bajajPendingVehicleEnqueuedAt: Date.now(),
+      });
       // Use START_FORM_FILL for Bajaj form automation
       chrome.tabs.sendMessage(tab.id, { action: 'START_FORM_FILL', payload }, (resp) => {
         if (chrome.runtime.lastError) { showStatus('❌ Reload the page and retry', 'error'); addLog('❌ Message error: ' + chrome.runtime.lastError.message, '#ff4757'); }
-        else if (resp && resp.status === 'started') { showStatus('✅ Automation started!', 'success'); addLog('✅ Form automation started', '#00ff7f'); }
+        else if (resp && resp.status === 'started') { showStatus('✅ Automation started!', 'success'); addLog('✅ Form automation started', '#00ff7f'); addLog('Detailed steps: open DevTools (F12) on this portal tab → Console (look for [Bajaj] / [Bajaj Form]).', '#888888'); }
       });
       startPolling();
     } else {
       addLog('🤖 Starting general automation...', '#00d4ff');
       showStatus('🚀 Starting automation...', 'info');
+      chrome.storage.local.set({
+        ...storageBase,
+        bajajPendingVehicleAfterForm: false,
+      });
       // Use START_LOGIN for Bajaj automation
       chrome.tabs.sendMessage(tab.id, { action: 'START_LOGIN', payload }, (resp) => {
         if (chrome.runtime.lastError) { showStatus('❌ Reload the page and retry', 'error'); addLog('❌ Message error: ' + chrome.runtime.lastError.message, '#ff4757'); }

@@ -5,6 +5,13 @@
 
 const BajajForm = {
   async run(payload, logger = console.log) {
+    const href = window.location.href;
+    const onPartnerLogin =
+      href.includes('portal.bajajgeneral.com/BagicNxt/partner/login.do') ||
+      /\/BagicNxt\/partner\/login\.do/i.test(href);
+    console.log('[Bajaj Form] 🔍 Checking URL:', href);
+    console.log('[Bajaj Form] 🔍 URL includes partner login.do?', onPartnerLogin);
+
     console.log('[Bajaj Form] 🚀 Starting Bajaj form flow...');
     logger('🚀 Starting Bajaj form flow...');
     
@@ -14,9 +21,9 @@ const BajajForm = {
     window.prompt = () => {};
     
     try {
-      console.log('[Bajaj Form] 📍 Current URL:', window.location.href);
-      // Check current URL
-      if (!window.location.href.includes('portal.bajajgeneral.com/BagicNxt/partner/login.do')) {
+      console.log('[Bajaj Form] 📍 Current URL:', href);
+      // Check current URL (query strings etc. still match via includes / regex)
+      if (!onPartnerLogin) {
         console.log('[Bajaj Form] ❌ Not on login page');
         return { success: false, error: 'Not on login page' };
       }
@@ -59,51 +66,25 @@ const BajajForm = {
 
       console.log('[Bajaj Form] ✅ Form flow completed successfully');
       logger('✅ Form flow completed successfully');
-      
-      // Wait for page to navigate to motorload.do after Proceed is clicked
-      console.log('[Bajaj Form] ⏳ Waiting for page to navigate to motorload.do...');
-      logger('⏳ Waiting for page navigation to motorload.do...');
-      
-      const maxWaitNav = 30000;
-      const startNavTime = Date.now();
-      let navigated = false;
-      
-      while (Date.now() - startNavTime < maxWaitNav) {
-        if (window.location.href.includes('motorload.do')) {
-          console.log('[Bajaj Form] ✅ Page navigated to motorload.do');
-          logger('✅ Page navigated to motorload.do');
-          navigated = true;
-          break;
+
+      // Full navigation to motorload.do destroys this content script. Only the
+      // service worker survives — queue START_VEHICLE_DETAILS in background.js;
+      // it relays with chrome.tabs.sendMessage after motorload.do reaches status complete.
+      console.log('[Bajaj Form] 📨 Queuing START_VEHICLE_DETAILS in background (survives navigation)...');
+      logger('⏳ Queued vehicle details — will run on motorload.do after page loads...');
+      chrome.runtime.sendMessage({ action: 'START_VEHICLE_DETAILS', payload }, (resp) => {
+        if (chrome.runtime.lastError) {
+          console.warn('[Bajaj Form] START_VEHICLE_DETAILS:', chrome.runtime.lastError.message);
+          return;
         }
-        await this.sleep(500);
-      }
-      
-      if (navigated) {
-        // Wait a bit for page to load
-        console.log('[Bajaj Form] ⏳ Waiting for motorload.do page to load...');
-        await this.sleep(2000);
-        
-        console.log('[Bajaj Form] ✅ motorload.do page loaded, triggering vehicle details flow...');
-        logger('✅ motorload.do page loaded, triggering vehicle details flow...');
-        // Trigger vehicle details flow via message to content script
-        console.log('[Bajaj Form] 📨 Sending START_VEHICLE_DETAILS message...');
-        chrome.runtime.sendMessage({ 
-          action: 'START_VEHICLE_DETAILS', 
-          payload: payload 
-        });
-      } else {
-        console.log('[Bajaj Form] ⚠️ Navigation timeout, sending START_VEHICLE_DETAILS anyway');
-        logger('⚠️ Navigation timeout, sending message anyway');
-        chrome.runtime.sendMessage({ 
-          action: 'START_VEHICLE_DETAILS', 
-          payload: payload 
-        });
-      }
-      
-      console.log('[Bajaj Form] 🎉 Form flow completed and vehicle details triggered');
+        console.log('[Bajaj Form] Background acknowledged:', resp);
+      });
+
+      console.log('[Bajaj Form] 🎉 Form flow completed; vehicle details will start on motorload.do');
       return { success: true };
 
     } catch (err) {
+      console.error('[Bajaj Form] ❌ Form flow failed:', err.message, err);
       logger('❌ Form flow failed:', err.message);
       return { success: false, error: err.message };
     }
@@ -245,16 +226,14 @@ const BajajForm = {
     
     // Wait for the Proceed button to be available
     await this.waitForElement('button[onclick="Motor_Proceed();"]', 10000);
-    
-    const proceedButton = document.querySelector('button[onclick="Motor_Proceed();"]');
+
+    let proceedButton = document.querySelector('button[onclick="Motor_Proceed();"]');
     if (!proceedButton) {
-      // Try alternative selectors
       const altSelectors = [
         'button.btn.btn-primary',
         'button[type="button"]',
         '.btn.btn-primary'
       ];
-      
       for (const selector of altSelectors) {
         const btn = document.querySelector(selector);
         if (btn && btn.textContent.trim().toLowerCase().includes('proceed')) {
@@ -323,9 +302,8 @@ const BajajForm = {
   }
 };
 
-// Export for use in other modules
+// Expose on window so sibling content scripts (e.g. content.js) always resolve the binding.
+window.BajajForm = BajajForm;
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = BajajForm;
-} else {
-  window.BajajForm = BajajForm;
 }

@@ -8,6 +8,13 @@
     window.prompt = () => {};
   }
 
+  console.log('[Bajaj Content] Modules loaded:', {
+    BajajLogin: typeof window.BajajLogin,
+    BajajForm: typeof window.BajajForm,
+    BajajVehicleDetails: typeof window.BajajVehicleDetails,
+    AutomationPauseController: typeof window.AutomationPauseController,
+  });
+
   function log(...args) {
     console.log('%c[Bajaj]', 'color: #0054A6; font-weight: bold;', ...args);
   }
@@ -111,11 +118,11 @@
       }
 
       // Execute login
-      if (typeof BajajLogin === 'undefined' || !BajajLogin.run) {
+      if (typeof window.BajajLogin === 'undefined' || !window.BajajLogin.run) {
         throw new Error('BajajLogin module not loaded');
       }
 
-      const result = await BajajLogin.run(payload, log);
+      const result = await window.BajajLogin.run(payload, log);
       if (!result.success) {
         log('❌ Login failed:', result.error);
         return result;
@@ -135,19 +142,28 @@
     log('🚀 Starting Bajaj form flow...');
     log('Current URL:', window.location.href);
 
+    const href = window.location.href;
+    const onPartnerLogin =
+      href.includes('portal.bajajgeneral.com/BagicNxt/partner/login.do') ||
+      /\/BagicNxt\/partner\/login\.do/i.test(href);
+
     try {
-      // Check if on partner login page
-      if (!window.location.href.includes('portal.bajajgeneral.com/BagicNxt/partner/login.do')) {
+      if (!onPartnerLogin) {
         log('❌ Not on partner login page for form flow');
         return { success: false, error: 'Not on partner login page' };
       }
 
       // Execute form flow
-      if (typeof BajajForm === 'undefined' || !BajajForm.run) {
+      if (typeof window.BajajForm === 'undefined' || !window.BajajForm.run) {
         throw new Error('BajajForm module not loaded');
       }
 
-      const result = await BajajForm.run(payload, log);
+      const result = await window.BajajForm.run(payload, log);
+      try {
+        log('📦 BajajForm.run() returned:', JSON.stringify(result));
+      } catch (_) {
+        log('📦 BajajForm.run() returned:', result);
+      }
       if (!result.success) {
         log('❌ Form flow failed:', result.error);
         return result;
@@ -172,11 +188,11 @@
       }
 
       // Execute vehicle details flow
-      if (typeof BajajVehicleDetails === 'undefined' || !BajajVehicleDetails.run) {
+      if (typeof window.BajajVehicleDetails === 'undefined' || !window.BajajVehicleDetails.run) {
         throw new Error('BajajVehicleDetails module not loaded');
       }
 
-      const result = await BajajVehicleDetails.run(payload, log);
+      const result = await window.BajajVehicleDetails.run(payload, log);
       if (!result.success) {
         log('❌ Vehicle details flow failed:', result.error);
         return result;
@@ -190,9 +206,47 @@
     }
   }
 
+  /** Single-flight vehicle run + FLOW_RESULT; clears popup “pending after form” flag. */
+  let vehicleDetailsRunLock = false;
+  function clearVehicleDetailsPendingStorage() {
+    chrome.storage.local.remove(['bajajPendingVehicleAfterForm', 'bajajPendingVehicleEnqueuedAt'], () => {});
+  }
+
+  async function runVehicleDetailsFromExtension(payload, sourceTag) {
+    if (!payload) {
+      log('❌ Vehicle details skipped: no payload');
+      return;
+    }
+    if (vehicleDetailsRunLock) {
+      log('⏭️ Vehicle details already in progress — skip duplicate (' + sourceTag + ')');
+      return;
+    }
+    vehicleDetailsRunLock = true;
+    clearVehicleDetailsPendingStorage();
+    log('🚗 Vehicle details starting (' + sourceTag + ')');
+    try {
+      if (typeof window.AutomationPauseController !== 'undefined') {
+        window.AutomationPauseController.startRun();
+      }
+      const result = await runBajajVehicleDetailsFlow(payload);
+      chrome.runtime.sendMessage({ action: 'FLOW_RESULT', result, payload });
+    } catch (e) {
+      log('❌ Vehicle details error:', e.message);
+      chrome.runtime.sendMessage({
+        action: 'FLOW_RESULT',
+        result: { success: false, error: e.message },
+        payload,
+      });
+    } finally {
+      vehicleDetailsRunLock = false;
+    }
+  }
+
   // ── MESSAGE LISTENER ─────────────────────────────────────────────────────────
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    console.log('[Bajaj Content] 📨 Message received:', msg?.action || '(no action)', '| URL:', window.location.href);
+
     if (msg.action === 'START_LOGIN') {
       log('📨 Received START_LOGIN');
       sendResponse({ status: 'started' });
@@ -213,6 +267,11 @@
           } else if (result.startFormFlow) {
             log('🔄 Starting form flow from login result...');
             const formResult = await runBajajFormFlow(msg.payload);
+            try {
+              log('📦 runBajajFormFlow (from login) returned:', JSON.stringify(formResult));
+            } catch (_) {
+              log('📦 runBajajFormFlow (from login) returned:', formResult);
+            }
             chrome.runtime.sendMessage({ 
               action: 'FLOW_RESULT', 
               result: formResult, 
@@ -247,64 +306,49 @@
 
       (async () => {
         try {
-          // Check if we're on motorload.do
           if (window.location.href.includes('motorload.do')) {
             log('✅ Already on motorload.do, running vehicle details flow directly...');
             console.log('[Bajaj Content] ✅ On motorload.do, starting vehicle details flow immediately');
-            const result = await runBajajVehicleDetailsFlow(msg.payload);
-            console.log('[Bajaj Content] ✅ Vehicle details flow completed:', result);
-            chrome.runtime.sendMessage({ 
-              action: 'FLOW_RESULT', 
-              result, 
-              payload: msg.payload 
-            });
+            await runVehicleDetailsFromExtension(msg.payload, 'START_VEHICLE_DETAILS');
           } else {
-            // Wait for page to navigate to motorload.do
             log('⏳ Not on motorload.do yet, waiting for navigation...');
             console.log('[Bajaj Content] ⏳ Not on motorload.do, waiting for navigation from:', window.location.href);
-            
+
             const maxWait = 20000;
             const startTime = Date.now();
-            
+
             while (Date.now() - startTime < maxWait) {
               if (window.location.href.includes('motorload.do')) {
                 log('✅ Successfully navigated to motorload.do');
                 console.log('[Bajaj Content] ✅ Navigation detected to motorload.do');
-                await sleep(2000); // Give page time to load content
+                await sleep(2000);
                 break;
               }
               await sleep(500);
             }
-            
-            // Now run vehicle details
+
             if (window.location.href.includes('motorload.do')) {
               log('✅ Running vehicle details flow on motorload.do...');
               console.log('[Bajaj Content] 🚀 Starting vehicle details flow');
-              const result = await runBajajVehicleDetailsFlow(msg.payload);
-              console.log('[Bajaj Content] ✅ Vehicle details flow completed:', result);
-              chrome.runtime.sendMessage({ 
-                action: 'FLOW_RESULT', 
-                result, 
-                payload: msg.payload 
-              });
+              await runVehicleDetailsFromExtension(msg.payload, 'START_VEHICLE_DETAILS after nav');
             } else {
               log('❌ Failed to navigate to motorload.do');
               console.log('[Bajaj Content] ❌ Still not on motorload.do:', window.location.href);
               const result = { success: false, error: 'Failed to navigate to vehicle details page (motorload.do)' };
-              chrome.runtime.sendMessage({ 
-                action: 'FLOW_RESULT', 
-                result, 
-                payload: msg.payload 
+              chrome.runtime.sendMessage({
+                action: 'FLOW_RESULT',
+                result,
+                payload: msg.payload,
               });
             }
           }
         } catch (e) {
           log('❌ Vehicle details error:', e.message);
           console.error('[Bajaj Content] ❌ Vehicle details error:', e);
-          chrome.runtime.sendMessage({ 
-            action: 'FLOW_RESULT', 
-            result: { success: false, error: e.message }, 
-            payload: msg.payload 
+          chrome.runtime.sendMessage({
+            action: 'FLOW_RESULT',
+            result: { success: false, error: e.message },
+            payload: msg.payload,
           });
         }
       })();
@@ -327,6 +371,11 @@
           } else if (window.location.href.includes('login.do')) {
             log('📍 On login page, running form flow first...');
             const formResult = await runBajajFormFlow(msg.payload);
+            try {
+              log('📦 START_AUTOMATION runBajajFormFlow returned:', JSON.stringify(formResult));
+            } catch (_) {
+              log('📦 START_AUTOMATION runBajajFormFlow returned:', formResult);
+            }
             if (formResult.success) {
               log('✅ Form flow completed, vehicle details flow will be triggered automatically');
               result = formResult;
@@ -375,6 +424,11 @@
           } else {
             log('📍 Not on motorload.do, running form flow...');
             const result = await runBajajFormFlow(msg.payload);
+            try {
+              log('📦 START_FORM_FILL runBajajFormFlow returned:', JSON.stringify(result));
+            } catch (_) {
+              log('📦 START_FORM_FILL runBajajFormFlow returned:', result);
+            }
             chrome.runtime.sendMessage({ 
               action: 'FLOW_RESULT', 
               result, 
@@ -397,8 +451,8 @@
     if (msg.action === 'PAUSE_AUTOMATION') {
       log('⏸️ PAUSE_AUTOMATION command received');
       console.log('[Bajaj Content] 🔴 Pause automation command received');
-      if (typeof AutomationPauseController !== 'undefined') {
-        AutomationPauseController.pause();
+      if (typeof window.AutomationPauseController !== 'undefined') {
+        window.AutomationPauseController.pause();
         log('✅ Automation paused by user');
         console.log('[Bajaj Content] ✅ Automation paused');
         sendResponse({ status: 'paused', message: 'Automation paused successfully' });
@@ -411,8 +465,8 @@
     if (msg.action === 'RESUME_AUTOMATION') {
       log('▶️ RESUME_AUTOMATION command received');
       console.log('[Bajaj Content] 🟢 Resume automation command received');
-      if (typeof AutomationPauseController !== 'undefined') {
-        AutomationPauseController.resume();
+      if (typeof window.AutomationPauseController !== 'undefined') {
+        window.AutomationPauseController.resume();
         log('✅ Automation resumed by user');
         console.log('[Bajaj Content] ✅ Automation resumed');
         sendResponse({ status: 'resumed', message: 'Automation resumed successfully' });
@@ -425,8 +479,8 @@
     if (msg.action === 'STOP_AUTOMATION') {
       log('⛔ STOP_AUTOMATION command received');
       console.log('[Bajaj Content] 🛑 Stop automation command received');
-      if (typeof AutomationPauseController !== 'undefined') {
-        AutomationPauseController.stop();
+      if (typeof window.AutomationPauseController !== 'undefined') {
+        window.AutomationPauseController.stop();
         log('✅ Automation stopped by user');
         console.log('[Bajaj Content] ✅ Automation stopped');
         sendResponse({ status: 'stopped', message: 'Automation stopped successfully' });
@@ -437,8 +491,8 @@
       return true;
     }
     if (msg.action === 'GET_AUTOMATION_STATUS') {
-      if (typeof AutomationPauseController !== 'undefined') {
-        sendResponse(AutomationPauseController.getState());
+      if (typeof window.AutomationPauseController !== 'undefined') {
+        sendResponse(window.AutomationPauseController.getState());
       } else {
         sendResponse({ isRunning: false, isPaused: false, isStopped: false, currentStep: null });
       }
@@ -452,34 +506,45 @@
   log('📌 Bajaj Extension loaded on:', window.location.href);
 
   // Reset automation state on page reload
-  if (typeof AutomationPauseController !== 'undefined') {
-    AutomationPauseController.reset();
+  if (typeof window.AutomationPauseController !== 'undefined') {
+    window.AutomationPauseController.reset();
     log('🔄 Automation state reset on page load');
   }
 
-  if (typeof AutomationPauseController !== 'undefined') {
-    AutomationPauseController.injectUI();
+  if (typeof window.AutomationPauseController !== 'undefined') {
+    window.AutomationPauseController.injectUI();
   }
 
   log('ℹ️ Bajaj Extension ready - login flow available');
 
-  // Auto-trigger vehicle details if on motorload.do page
+  const PENDING_VEHICLE_AUTOSTART_MAX_AGE_MS = 8 * 60 * 1000;
+
+  // Auto-start vehicle details after full-page navigation from partner login.do
+  // (content script is recreated; popup sets bajajPendingVehicleAfterForm + bajajPayload).
   if (window.location.href.includes('motorload.do')) {
-    log('🔍 Detected motorload.do page, checking for auto-trigger...');
-    console.log('[Bajaj Content] 🔍 motorload.do detected - will auto-trigger if form flow just completed');
-    
-    // Wait for page to be ready
+    log('🔍 motorload.do — checking for vehicle-details autostart (after form from popup)...');
     (async () => {
-      await sleep(1500);
-      
-      // Check if this is a fresh page load after form completion
-      // (typically happens right after Proceed button click)
-      const pageReadyCheck = document.readyState === 'complete' || document.readyState === 'interactive';
-      
-      if (pageReadyCheck) {
-        log('ℹ️ motorload.do page is ready, will auto-start if triggered by form flow');
-        console.log('[Bajaj Content] ℹ️ motorload.do page ready - waiting for explicit message or timeout');
+      await sleep(2500);
+      if (!window.location.href.includes('motorload.do')) return;
+      const s = await new Promise((resolve) => {
+        chrome.storage.local.get(
+          ['bajajPendingVehicleAfterForm', 'bajajPendingVehicleEnqueuedAt', 'bajajPayload'],
+          resolve
+        );
+      });
+      if (!s.bajajPendingVehicleAfterForm || !s.bajajPayload) {
+        log('ℹ️ No vehicle autostart: start from popup on partner login.do (Start), or press Start on motorload.do');
+        return;
       }
+      const enqueued = Number(s.bajajPendingVehicleEnqueuedAt) || 0;
+      const age = Date.now() - enqueued;
+      if (age > PENDING_VEHICLE_AUTOSTART_MAX_AGE_MS) {
+        log('ℹ️ Pending vehicle autostart expired (' + Math.round(age / 60000) + ' min), clearing');
+        clearVehicleDetailsPendingStorage();
+        return;
+      }
+      log('🚀 Autostart: vehicle details after motorload.do load');
+      await runVehicleDetailsFromExtension(s.bajajPayload, 'motorload.do autostart');
     })();
   }
 })();

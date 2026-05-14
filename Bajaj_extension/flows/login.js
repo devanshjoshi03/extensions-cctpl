@@ -271,9 +271,7 @@ const BajajLogin = {
   }
 };
 
-// Export for use in other modules
+window.BajajLogin = BajajLogin;
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = BajajLogin;
-} else {
-  window.BajajLogin = BajajLogin;
 }

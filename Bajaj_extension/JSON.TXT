@@ -13,7 +13,7 @@
         "model": "SP 125",
         "variant": "SP125 DLX DISC OBD2B",
         "rtoLocation": "CG04",
-        "idv": 76000,
+        "idv": 7600,
         "msp": 80000,
         "TPMAX": 5825.869568,
         "odfactor": 1.676,

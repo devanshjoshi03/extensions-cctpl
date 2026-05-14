@@ -980,3 +980,5 @@ const AutomationPauseController = {
     this._updateUI();
   },
 };
+
+window.AutomationPauseController = AutomationPauseController;

@@ -1,53 +1,40 @@
 // Bajaj General Insurance - Vehicle Details Flow
 // Handles vehicle details form automation on motorload.do page
 
+// Page scripts run in the page "main" world; content scripts are isolated — patching
+// window.alert here does NOT affect the portal. Inject a <script> into the document
+// so the lock runs in the same world as DevTools console.
+function bajajInjectPageDialogLock() {
+  try {
+    const root = document.head || document.documentElement;
+    if (!root) return;
+
+    const script = document.createElement('script');
+    script.setAttribute('data-bajaj-page-dialog-lock', '');
+    script.textContent =
+      '(function(){' +
+      'var n=function(){};' +
+      'var t=function(){return true;};' +
+      'try{if(window.__bajajDlgIv)clearInterval(window.__bajajDlgIv);}catch(e){}' +
+      'window.alert=n;window.confirm=t;window.prompt=n;' +
+      'try{Window.prototype.alert=n;Window.prototype.confirm=t;Window.prototype.prompt=n;}catch(e){}' +
+      'window.__bajajDlgIv=setInterval(function(){try{window.alert=n;window.confirm=t;window.prompt=n;}catch(e){}},100);' +
+      '})();';
+
+    root.appendChild(script);
+    script.remove();
+  } catch (e) {
+    console.warn('[Bajaj] page dialog lock inject failed:', e);
+  }
+}
+
+bajajInjectPageDialogLock();
+
 const BajajVehicleDetails = {
 
-  // ── Block ALL dialogs — called once at the very top and re-injected into KYC tab ──
+  // Each call re-injects into the page world (clears prior interval, re-locks alert/confirm/prompt).
   _blockAlerts() {
-    const noop = () => {};
-    const alwaysTrue = () => true;
-    
-    // Block all dialog methods comprehensively
-    const blockDialog = (name, returnValue) => {
-      try {
-        Object.defineProperty(window, name, {
-          value: returnValue,
-          writable: false,
-          configurable: false,
-          enumerable: false
-        });
-      } catch (e) {
-        window[name] = returnValue;
-      }
-      
-      // Also block on prototype chain
-      try {
-        Object.defineProperty(window.constructor.prototype, name, {
-          value: returnValue,
-          writable: false,
-          configurable: false,
-          enumerable: false
-        });
-      } catch (e) {
-        // Ignore prototype errors
-      }
-    };
-    
-    // Block all dialog types
-    blockDialog('alert', noop);
-    blockDialog('confirm', alwaysTrue);
-    blockDialog('prompt', noop);
-    
-    // Belt-and-suspenders - direct assignment
-    window.alert = noop;
-    window.confirm = alwaysTrue;
-    window.prompt = noop;
-    
-    // Override any existing methods that might have been set
-    if (typeof window.alert !== 'function') window.alert = noop;
-    if (typeof window.confirm !== 'function') window.confirm = alwaysTrue;
-    if (typeof window.prompt !== 'function') window.prompt = noop;
+    bajajInjectPageDialogLock();
   },
 
   // ── Wait for any visible loading overlay / spinner to disappear ──
@@ -95,21 +82,7 @@ const BajajVehicleDetails = {
     logger('🚀 Starting Bajaj vehicle details flow...');
     logger('📍 Current URL:', window.location.href);
 
-    // Execute alert blocking in console first
-    console.log('[Bajaj Vehicle Details] 🔧 Executing: window.alert = () => {}');
-    window.alert = () => {};
-    console.log('[Bajaj Vehicle Details] ✅ Alert blocking executed');
-    
-    // Block ALL dialogs permanently from the very start
     this._blockAlerts();
-    // Also override via prototype so late-binding calls are caught
-    window.confirm = () => true;
-    window.prompt  = () => {};
-    // Global alert blocking - ensure no alerts anywhere
-    if (typeof window !== 'undefined') {
-      window.confirm = () => true;
-      window.prompt = () => {};
-    }
 
     try {
       // Start checking for new checkbox
@@ -148,6 +121,9 @@ const BajajVehicleDetails = {
       console.log('[Bajaj Vehicle Details] ⚠️ Expected motorload.do, got:', window.location.href);
     }
 
+    // Portal loading UI: HoldOn.js (requires jQuery on the site). HoldOn.open()
+    // injects #holdon-overlay and spinner nodes (e.g. sk-fading-circle). We do not
+    // bundle HoldOn — we only wait until that overlay is gone and the form is ready.
     // Wait for HoldOn loading overlay to appear and disappear
     const maxWaitTime = 30000;
     const startTime = Date.now();
@@ -575,86 +551,15 @@ const BajajVehicleDetails = {
       logger('⚠️ Calculate Premium button not found');
     }
 
-    // ── Step 9: Generate and Save Quote ──────────────────────────────────────
-    logger('🔘 Clicking Generate and Save Quote button...');
-    const saveQuoteButton =
-      document.querySelector('#immSave_on_addon') ||
-      Array.from(document.querySelectorAll('button')).find(btn =>
-        btn.textContent.trim().includes('Generate and Save Quote')
-      );
-    if (saveQuoteButton) {
-      saveQuoteButton.click();
-      logger('✅ Clicked Generate and Save Quote');
-      await this.sleep(2000);
-      await this.waitForLoadingToFinish(logger, 20000, 'Generate and Save Quote');
-    } else {
-      logger('⚠️ Generate and Save Quote button not found');
-    }
-
     await this.fillCustomerContactDetails(payload, logger);
     await this.sleep(1000);
   },
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // CUSTOMER CONTACT DETAILS — slow, one field at a time
+  // CONTACT STEP — immediate #v_immd_* / #sd_telphone_no fields skipped
   // ─────────────────────────────────────────────────────────────────────────────
   async fillCustomerContactDetails(payload, logger) {
-    logger('👤 Filling customer contact details...');
     this._blockAlerts();
-    window.alert = () => {}; window.confirm = () => true; window.prompt = () => {};
-
-    // First Name
-    const firstNameInput = document.querySelector('#v_immd_fname');
-    if (firstNameInput) {
-      const firstName = payload.customerDetails?.firstName ||
-                        payload.customerDetails?.name      ||
-                        payload.proposerDetails?.firstName || '';
-      if (firstName) {
-        firstNameInput.focus();
-        await this.sleep(400);
-        firstNameInput.value = firstName;
-        firstNameInput.dispatchEvent(new Event('input', { bubbles: true }));
-        await this.sleep(300);
-        firstNameInput.dispatchEvent(new Event('blur',  { bubbles: true }));
-        logger(`✅ Filled first name: ${firstName}`);
-        await this.sleep(600);
-      }
-    }
-
-    // Email
-    const emailInput = document.querySelector('#v_immd_email');
-    if (emailInput) {
-      const email = payload.customerDetails?.email || payload.proposerDetails?.email || '';
-      if (email) {
-        emailInput.focus();
-        await this.sleep(400);
-        emailInput.value = email;
-        emailInput.dispatchEvent(new Event('input', { bubbles: true }));
-        await this.sleep(300);
-        emailInput.dispatchEvent(new Event('blur',  { bubbles: true }));
-        logger(`✅ Filled email: ${email}`);
-        await this.sleep(600);
-      }
-    }
-
-    // Mobile
-    const mobileInput = document.querySelector('#sd_telphone_no');
-    if (mobileInput) {
-      const mobile = payload.customerDetails?.mobile   ||
-                     payload.customerDetails?.phone    ||
-                     payload.proposerDetails?.mobile   ||
-                     payload.proposerDetails?.phone    || '';
-      if (mobile) {
-        mobileInput.focus();
-        await this.sleep(400);
-        mobileInput.value = mobile;
-        mobileInput.dispatchEvent(new Event('input', { bubbles: true }));
-        await this.sleep(300);
-        mobileInput.dispatchEvent(new Event('blur',  { bubbles: true }));
-        logger(`✅ Filled mobile: ${mobile}`);
-        await this.sleep(600);
-      }
-    }
 
     // ── Proceed to Issuance ───────────────────────────────────────────────────
     logger('🔘 Clicking Proceed to Issuance...');
@@ -909,7 +814,7 @@ const BajajVehicleDetails = {
     }
     await this.sleep(600);
 
-    // ── Save Customer Id ──────────────────────────────────────────────────────
+    // ── Save Customer Id → wait for modal Close, click if found ──────────────
     logger('🔘 Clicking Save Customer Id...');
     const saveCustomerBtn =
       document.querySelector('button[onclick*="SAVE_CUST"]') ||
@@ -922,27 +827,33 @@ const BajajVehicleDetails = {
       await this.sleep(2000);
       await this.waitForLoadingToFinish(logger, 20000, 'Save Customer Id');
       await this.sleep(1200); // extra settle
+
+      logger('⏳ Waiting for Close button (post–Save Customer modal)...');
+      const closeWaitMs = 15000;
+      const closeStart = Date.now();
+      let closeBtn = null;
+      while (Date.now() - closeStart < closeWaitMs) {
+        closeBtn =
+          document.querySelector('button[onclick*="clear_ref"]') ||
+          Array.from(document.querySelectorAll('button[data-dismiss="modal"]')).find(b =>
+            b.textContent.trim().includes('Close')
+          );
+        if (closeBtn && closeBtn.offsetParent !== null) break;
+        closeBtn = null;
+        await this.sleep(300);
+      }
+      if (closeBtn) {
+        closeBtn.click();
+        logger('✅ Clicked Close button');
+        await this.sleep(1000);
+        await this.waitForLoadingToFinish(logger, 10000, 'close modal');
+      } else {
+        logger('⚠️ Close button not found after Save Customer');
+      }
+      await this.sleep(800);
     } else {
       logger('⚠️ Save Customer Id button not found');
     }
-
-    // ── Close modal ───────────────────────────────────────────────────────────
-    logger('🔘 Looking for Close button...');
-    await this.sleep(1000); // wait for modal to appear
-    const closeBtn =
-      document.querySelector('button[onclick*="clear_ref"]') ||
-      Array.from(document.querySelectorAll('button[data-dismiss="modal"]')).find(b =>
-        b.textContent.trim().includes('Close')
-      );
-    if (closeBtn) {
-      closeBtn.click();
-      logger('✅ Clicked Close button');
-      await this.sleep(1000);
-      await this.waitForLoadingToFinish(logger, 10000, 'close modal');
-    } else {
-      logger('⚠️ Close button not found');
-    }
-    await this.sleep(800);
 
     // ── Validate PAN — re-block alerts, open modal ────────────────────────────
     this._blockAlerts();
@@ -959,18 +870,31 @@ const BajajVehicleDetails = {
       logger('⚠️ Validate PAN modal button not found');
     }
 
-    // ── Validate PAN — inside modal (re-block alerts again) ───────────────────
+    // ── Validate PAN — inside modal (re-lock page + isolated window right before click) ──
     this._blockAlerts();
-    window.alert = () => {}; window.confirm = () => true; window.prompt = () => {};
 
     logger('🔘 Clicking Validate PAN inside modal...');
-    await this.sleep(800);
     const validatePanBtn = document.querySelector('#sendmailBtn');
     if (validatePanBtn) {
+      const _noop = () => {};
+      const _true = () => true;
+      try {
+        if (typeof Window !== 'undefined' && Window.prototype) {
+          Window.prototype.alert = _noop;
+          Window.prototype.confirm = _true;
+          Window.prototype.prompt = _noop;
+        }
+      } catch (_) { /* ignore */ }
+      window.alert = _noop;
+      window.confirm = _true;
+      window.prompt = _noop;
+
+      this._blockAlerts();
       validatePanBtn.click();
-      logger('✅ Clicked Validate PAN inside modal');
+      logger('✅ Clicked Validate PAN inside modal — success alert should be suppressed');
       await this.sleep(2000);
       await this.waitForLoadingToFinish(logger, 20000, 'PAN validation');
+      logger('✅ PAN validation complete');
     } else {
       logger('⚠️ Validate PAN inside modal (#sendmailBtn) not found');
     }
@@ -1174,3 +1098,5 @@ const BajajVehicleDetails = {
     throw new Error(`Element ${selector} not found within ${timeout}ms`);
   }
 };
+
+window.BajajVehicleDetails = BajajVehicleDetails;
