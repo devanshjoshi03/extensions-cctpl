@@ -155,6 +155,46 @@ if (chrome.downloads?.onCreated) {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
+  if (msg.action === 'INJECT_MAIN_WORLD_DIALOG_LOCK') {
+    const tabId = sender.tab?.id;
+    if (tabId == null) {
+      sendResponse({ ok: false, error: 'no sender tab' });
+      return true;
+    }
+    chrome.scripting
+      .executeScript({
+        target: { tabId, allFrames: true },
+        world: 'MAIN',
+        func: function bajajMainWorldLockDialogs() {
+          var n = function () {};
+          var t = function () { return true; };
+          try {
+            if (window.__bajajDlgIv) clearInterval(window.__bajajDlgIv);
+          } catch (e0) { /* ignore */ }
+          window.alert = n;
+          window.confirm = t;
+          window.prompt = n;
+          try {
+            Window.prototype.alert = n;
+            Window.prototype.confirm = t;
+            Window.prototype.prompt = n;
+          } catch (e1) { /* ignore */ }
+          window.__bajajDlgIv = setInterval(function () {
+            try {
+              window.alert = n;
+              window.confirm = t;
+              window.prompt = n;
+            } catch (e2) { /* ignore */ }
+          }, 100);
+        },
+      })
+      .then(() => sendResponse({ ok: true }))
+      .catch((err) =>
+        sendResponse({ ok: false, error: String(err && err.message ? err.message : err) })
+      );
+    return true;
+  }
+
   if (msg.action === 'START_VEHICLE_DETAILS') {
     const tabId = sender.tab?.id;
     if (tabId == null) {

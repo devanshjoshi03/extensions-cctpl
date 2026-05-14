@@ -1,9 +1,7 @@
 // Bajaj General Insurance - Vehicle Details Flow
 // Handles vehicle details form automation on motorload.do page
 
-// Page scripts run in the page "main" world; content scripts are isolated — patching
-// window.alert here does NOT affect the portal. Inject a <script> into the document
-// so the lock runs in the same world as DevTools console.
+// Inline <script> can be blocked by CSP; MAIN-world inject is done via background + scripting API.
 function bajajInjectPageDialogLock() {
   try {
     const root = document.head || document.documentElement;
@@ -28,12 +26,29 @@ function bajajInjectPageDialogLock() {
   }
 }
 
-bajajInjectPageDialogLock();
+function bajajInjectMainWorldDialogLock() {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ action: 'INJECT_MAIN_WORLD_DIALOG_LOCK' }, (r) => {
+      if (chrome.runtime.lastError) {
+        console.warn('[Bajaj] MAIN-world dialog lock:', chrome.runtime.lastError.message);
+        resolve({ ok: false, error: chrome.runtime.lastError.message });
+      } else {
+        resolve(r || { ok: false });
+      }
+    });
+  });
+}
+
+(async function bajajInitDialogLocks() {
+  await bajajInjectMainWorldDialogLock();
+  bajajInjectPageDialogLock();
+})();
 
 const BajajVehicleDetails = {
 
-  // Each call re-injects into the page world (clears prior interval, re-locks alert/confirm/prompt).
+  // MAIN world (page) + <script> fallback — non-blocking except where code awaits explicitly.
   _blockAlerts() {
+    chrome.runtime.sendMessage({ action: 'INJECT_MAIN_WORLD_DIALOG_LOCK' }, () => void chrome.runtime.lastError);
     bajajInjectPageDialogLock();
   },
 
@@ -856,6 +871,7 @@ const BajajVehicleDetails = {
     }
 
     // ── Validate PAN — re-block alerts, open modal ────────────────────────────
+    await bajajInjectMainWorldDialogLock();
     this._blockAlerts();
     window.alert = () => {}; window.confirm = () => true; window.prompt = () => {};
 
@@ -870,7 +886,8 @@ const BajajVehicleDetails = {
       logger('⚠️ Validate PAN modal button not found');
     }
 
-    // ── Validate PAN — inside modal (re-lock page + isolated window right before click) ──
+    // ── Validate PAN — inside modal: await MAIN-world lock before click (native alert)
+    await bajajInjectMainWorldDialogLock();
     this._blockAlerts();
 
     logger('🔘 Clicking Validate PAN inside modal...');
@@ -889,6 +906,7 @@ const BajajVehicleDetails = {
       window.confirm = _true;
       window.prompt = _noop;
 
+      await bajajInjectMainWorldDialogLock();
       this._blockAlerts();
       validatePanBtn.click();
       logger('✅ Clicked Validate PAN inside modal — success alert should be suppressed');
