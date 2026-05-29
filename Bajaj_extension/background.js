@@ -156,9 +156,9 @@ if (chrome.downloads?.onCreated) {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.action === 'INJECT_MAIN_WORLD_DIALOG_LOCK') {
-    const tabId = sender.tab?.id;
+    const tabId = msg.tabId != null ? msg.tabId : sender.tab?.id;
     if (tabId == null) {
-      sendResponse({ ok: false, error: 'no sender tab' });
+      sendResponse({ ok: false, error: 'no tab id' });
       return true;
     }
     chrome.scripting
@@ -361,8 +361,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             setTimeout(() => {
               chrome.scripting.executeScript({
                 target: { tabId: kycTab.id },
-                func: async function () {
+                args: [kycTab.id],
+                func: async function (kycTabId) {
   const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const lockMainWorld = () =>
+    new Promise((res) => {
+      chrome.runtime.sendMessage(
+        { action: 'INJECT_MAIN_WORLD_DIALOG_LOCK', tabId: kycTabId },
+        () => {
+          void chrome.runtime.lastError;
+          res();
+        }
+      );
+    });
+
+  await lockMainWorld();
   window.alert = () => {}; window.confirm = () => true; window.prompt = () => {};
 
   console.log('[KYC] ⏳ Waiting for DOB field...');
@@ -625,6 +638,7 @@ const proceedBtn = document.querySelector('#ocrKycBtn') ||
                    );
 
 if (proceedBtn) {
+  await lockMainWorld();
   proceedBtn.click();
   console.log('[KYC] ✅ Clicked "Proceed for KYC" button');
   await sleep(2000);
@@ -640,7 +654,8 @@ if (proceedBtn) {
                    );
 
   if (closeBtn) {
-    window.alert = () => {};
+    await lockMainWorld();
+    await lockMainWorld();
     closeBtn.click();
     console.log('[KYC] ✅ Clicked "Close" button');
     await sleep(1000);

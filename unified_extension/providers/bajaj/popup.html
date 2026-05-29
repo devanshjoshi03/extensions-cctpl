@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bajaj General Insurance Automation</title>
+  <link rel="stylesheet" href="popup.css">
+  <link rel="stylesheet" href="../../hub-nav.css">
+</head>
+<body data-provider="bajaj">
+  <div class="container">
+    <nav class="hub-nav">
+      <a href="../../popup.html">← All insurers</a>
+      <a href="../../config.html">Settings</a>
+    </nav>
+    <div class="header">
+      <h1>🛡️ Bajaj General Insurance</h1>
+    </div>
+    <div class="section">
+      <textarea id="json-input" rows="18" placeholder='Paste JSON payload here...'></textarea>
+    </div>
+    <div class="actions">
+      <button id="start-btn" class="btn btn-primary">Start</button>
+    </div>
+    <div id="automation-controls" class="controls-row" style="display:none;">
+      <button id="pause-btn" class="btn btn-ctrl btn-pause" disabled>⏸️ Pause</button>
+      <button id="resume-btn" class="btn btn-ctrl btn-resume" disabled style="display:none;">▶️ Resume</button>
+      <button id="stop-btn" class="btn btn-ctrl btn-stop" disabled>⛔ Stop</button>
+    </div>
+    <div id="auto-status" class="auto-status" style="display:none;">
+      <div class="auto-status-row">
+        <span id="auto-badge" class="auto-badge idle">💤 Idle</span>
+        <span id="auto-step" class="auto-step">—</span>
+      </div>
+    </div>
+    <div id="status" class="status hidden"></div>
+    <div class="section">
+      <label for="logs-output">📋 Live Logs:</label>
+      <div id="logs-output" class="logs-output"></div>
+    </div>
+  </div>
+  <script src="../../hub-nav.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
