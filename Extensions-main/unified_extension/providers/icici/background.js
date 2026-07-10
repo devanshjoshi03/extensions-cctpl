@@ -19,22 +19,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       }
     });
     return true;
-  } else if (request.action === 'ICICI_PAGE_UNLOAD') {
-    console.log('[ICICI] Page unload received - marking automation stopped');
-    try {
-      chrome.storage.local.set({
-        iciciAutomation: {
-          isStopped: true,
-          isRunning: false,
-          phase: 'stopped',
-          currentStep: 'Stopped (page reload)',
-          updatedAt: Date.now(),
-        },
-      });
-    } catch (e) {
-      console.warn('[ICICI] Failed to persist stopped state on unload', e);
-    }
-    sendResponse({ success: true });
   }
 });
 

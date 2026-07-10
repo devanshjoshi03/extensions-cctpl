@@ -7,6 +7,46 @@
 // ICICI shows <div class="spinner"> while pages load; block all actions until gone.
 
 const SPINNER_SELECTOR = 'div.spinner';
+const ICICI_AUTOMATION_STORAGE_KEY = 'iciciAutomation';
+
+async function getIciciAutomationState() {
+  return new Promise((resolve) => {
+    try {
+      chrome.storage.local.get(ICICI_AUTOMATION_STORAGE_KEY, (result) => {
+        resolve(result?.[ICICI_AUTOMATION_STORAGE_KEY] || null);
+      });
+    } catch (_) {
+      resolve(null);
+    }
+  });
+}
+
+function waitForIciciAutomationChange(timeoutMs = 50) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      chrome.storage.onChanged.removeListener(onChange);
+      clearTimeout(timer);
+      resolve();
+    };
+    const onChange = (changes, area) => {
+      if (area === 'local' && changes?.[ICICI_AUTOMATION_STORAGE_KEY]) done();
+    };
+    const timer = setTimeout(done, timeoutMs);
+    chrome.storage.onChanged.addListener(onChange);
+  });
+}
+
+async function waitForIciciAutomationReady() {
+  while (true) {
+    const state = await getIciciAutomationState();
+    if (state?.isStopped) throw new Error('Automation stopped');
+    if (!state?.isPaused) return state;
+    await waitForIciciAutomationChange();
+  }
+}
 
 function isElementVisible(el) {
   if (!el || !el.isConnected) return false;
@@ -34,7 +74,13 @@ function waitForSpinnerToFinish(timeoutMs = 120000, onWaiting) {
   let notified = false;
 
   return new Promise((resolve) => {
-    const check = () => {
+    const check = async () => {
+      try {
+        await waitForIciciAutomationReady();
+      } catch (_) {
+        resolve(false);
+        return;
+      }
       if (!isSpinnerVisible()) {
         resolve(true);
         return;
@@ -49,7 +95,7 @@ function waitForSpinnerToFinish(timeoutMs = 120000, onWaiting) {
       }
       setTimeout(check, 150);
     };
-    check();
+    void check();
   });
 }
 
@@ -59,8 +105,12 @@ async function beforeUiAction() {
 
 // ─── BASIC HELPERS ───────────────────────────────────────────────────────────
 
-function wait(ms) {
-  return new Promise((r) => setTimeout(r, ms));
+async function wait(ms) {
+  const deadline = Date.now() + Math.max(0, Number(ms) || 0);
+  while (Date.now() < deadline) {
+    await waitForIciciAutomationReady();
+    await new Promise((r) => setTimeout(r, Math.min(100, Math.max(0, deadline - Date.now()))));
+  }
 }
 
 function qs(selector, root) {
