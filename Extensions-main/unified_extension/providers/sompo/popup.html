@@ -5,9 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Universal Sompo Automation</title>
   <link rel="stylesheet" href="popup.css">
+  <link rel="stylesheet" href="../../hub-nav.css">
 </head>
-<body>
+<body data-provider="sompo">
   <div class="container">
+    <nav class="hub-nav">
+      <a href="../../popup.html">← All insurers</a>
+      <a href="../../config.html">Settings</a>
+    </nav>
     <div class="header">
       <h1>🛡️ Universal Sompo</h1>
     </div>
@@ -30,6 +35,7 @@
     </div>
     <div id="status" class="status hidden"></div>
   </div>
+  <script src="../../hub-nav.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

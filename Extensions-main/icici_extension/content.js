@@ -22,14 +22,58 @@
     console.log('%c[ICICI]', 'color: #2a9fd8; font-weight: bold;', ...args);
   }
 
-  function sleep(ms) {
-    return new Promise((r) => setTimeout(r, ms));
+  function isReloadNavigation() {
+    try {
+      const navEntry = performance.getEntriesByType?.('navigation')?.[0];
+      if (navEntry?.type) return navEntry.type === 'reload';
+    } catch (_) {}
+
+    try {
+      return performance.navigation?.type === performance.navigation.TYPE_RELOAD;
+    } catch (_) {}
+
+    return false;
   }
 
   async function getAutomationState() {
     return new Promise((resolve) => {
       chrome.storage.local.get(STORAGE_KEY, (d) => resolve(d[STORAGE_KEY] || null));
     });
+  }
+
+  function waitForAutomationStateChange(timeoutMs = 50) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        chrome.storage.onChanged.removeListener(onChange);
+        clearTimeout(timer);
+        resolve();
+      };
+      const onChange = (changes, area) => {
+        if (area === 'local' && changes?.[STORAGE_KEY]) done();
+      };
+      const timer = setTimeout(done, timeoutMs);
+      chrome.storage.onChanged.addListener(onChange);
+    });
+  }
+
+  async function waitForAutomationGate() {
+    while (true) {
+      const state = await getAutomationState();
+      if (state?.isStopped) throw new Error('Automation stopped');
+      if (!state?.isPaused) return state;
+      await waitForAutomationStateChange();
+    }
+  }
+
+  async function sleep(ms) {
+    const deadline = Date.now() + Math.max(0, Number(ms) || 0);
+    while (Date.now() < deadline) {
+      await waitForAutomationGate();
+      await new Promise((r) => setTimeout(r, Math.min(100, Math.max(0, deadline - Date.now()))));
+    }
   }
 
   let stateWriteChain = Promise.resolve();
@@ -55,6 +99,7 @@
   }
 
   async function waitForSpinnerIdle(logger) {
+    await waitForAutomationGate();
     if (!window.flowUtils?.waitForSpinnerToFinish) return;
     await window.flowUtils.waitForSpinnerToFinish(120000, () =>
       logger('⏳ Spinner on screen — waiting before next step...')
@@ -94,6 +139,7 @@
   }
 
   async function runProposalFlow(payload, logger) {
+    await waitForAutomationGate();
     if (!window.ICICIProposal?.run) {
       throw new Error(
         'Proposal module not loaded (script error). Reload the extension in chrome://extensions'
@@ -111,6 +157,7 @@
 
   async function runQuoteChain(payload, logger) {
     if (window.ICICIQuote && typeof window.ICICIQuote.run === 'function') {
+      await waitForAutomationGate();
       await setAutomationState({ phase: 'quote' });
       await stepLog('Starting quote flow...');
       const quoteResult = await window.ICICIQuote.run(payload, logger);
@@ -121,6 +168,7 @@
     }
 
     if (window.ICICIPremium && typeof window.ICICIPremium.run === 'function') {
+      await waitForAutomationGate();
       await setAutomationState({ phase: 'premium' });
       await stepLog('Starting premium flow...');
       const premiumResult = await window.ICICIPremium.run(payload, logger);
@@ -328,6 +376,19 @@
     const state = await getAutomationState();
     if (!state?.isRunning || state?.isStopped) return;
 
+    if (isReloadNavigation()) {
+      log('Manual refresh detected - stopping active automation');
+      await setAutomationState({
+        isStopped: true,
+        isRunning: false,
+        isPaused: false,
+        phase: 'stopped',
+        lastError: null,
+        currentStep: 'Stopped (manual refresh)',
+      });
+      return;
+    }
+
     if (isStateStale(state)) {
       log('Stale automation state — not resuming');
       await setAutomationState({
@@ -352,28 +413,4 @@
 
   log('✅ ICICI Content script loaded');
 
-  // Reset automation state when the page is refreshed or closed
-  // This attempts to mark the automation as stopped so the popup/background
-  // do not try to resume an automation that was interrupted by a reload.
-  try {
-    window.addEventListener('beforeunload', () => {
-      // Best-effort: set the stored automation state to stopped.
-      // Note: beforeunload handlers have limited time; this is a best-effort update.
-      void setAutomationState({
-        isStopped: true,
-        isRunning: false,
-        phase: 'stopped',
-        currentStep: 'Stopped (page reload)',
-      });
-
-      // Notify the background script as an additional fallback.
-      try {
-        chrome.runtime.sendMessage({ action: 'ICICI_PAGE_UNLOAD' });
-      } catch (e) {
-        // ignore
-      }
-    });
-  } catch (e) {
-    // If adding a listener fails for some reason, just ignore.
-  }
 })();

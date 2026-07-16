@@ -6,13 +6,7 @@
 const ICICIProposal = {
   async run(payload, logger = console.log) {
     logger('🚀 Starting ICICI Lombard proposal flow...');
-    logger(`📍 Current URL: ${window.location.href}`);
-
-    if (window.flowUtils?.waitForSpinnerToFinish) {
-      await window.flowUtils.waitForSpinnerToFinish(120000, () =>
-        logger('⏳ Loading spinner visible — waiting...')
-      );
-    }
+    logger('Current URL:', window.location.href);
 
     try {
       // Check if on proposal page
@@ -40,8 +34,12 @@ const ICICIProposal = {
         logger('⚠️ Failed to fill chassis number');
       }
 
-      // Vehicle color fill intentionally skipped
-      logger('ℹ️ Skipping vehicle color autofill (disabled)');
+      // Fill vehicle color
+      filled = await this.fillVehicleColor(payload, logger);
+      
+      if (!filled) {
+        logger('⚠️ Failed to fill vehicle color');
+      }
 
       // Check Complete KYC radio button
       let checked = await this.checkCompleteKYCRadio(logger);
@@ -134,17 +132,6 @@ const ICICIProposal = {
         logger('⚠️ Failed to fill email');
       }
 
-      // Fill address line (building + street) and pincode
-      filled = await this.fillAddressLine(payload, logger);
-      if (!filled) {
-        logger('⚠️ Failed to fill address line');
-      }
-
-      filled = await this.fillPincode(payload, logger);
-      if (!filled) {
-        logger('⚠️ Failed to fill pincode');
-      }
-
       logger('✅ Proposal flow completed successfully');
       return { success: true };
 
@@ -156,24 +143,30 @@ const ICICIProposal = {
 
   async waitForProposalPageLoad(logger) {
     logger('⏳ Waiting for proposal page to fully load...');
-    const utils = window.flowUtils || {};
-    if (utils.waitForPageReady) {
-      const ok = await utils.waitForPageReady(
-        () => {
-          const engineInput = document.querySelector('input[formcontrolname="engineNo"]');
-          const chassisInput = document.querySelector('input[formcontrolname="chassisNo"]');
-          return !!(engineInput || chassisInput);
-        },
-        {
-          timeoutMs: 120000,
-          onSpinnerWait: () => logger('⏳ Spinner on screen — waiting...'),
+    
+    const timeout = 10000;
+    const start = Date.now();
+
+    return new Promise((resolve) => {
+      const check = () => {
+        const engineInput = document.querySelector('input[formcontrolname="engineNo"]');
+        const chassisInput = document.querySelector('input[formcontrolname="chassisNo"]');
+        
+        if (engineInput || chassisInput) {
+          logger(`✅ Proposal page loaded`);
+          return resolve(true);
         }
-      );
-      if (ok) logger('✅ Proposal page loaded');
-      else logger('⚠️ Proposal page load timeout, but continuing...');
-      return ok;
-    }
-    return true;
+
+        if (Date.now() - start > timeout) {
+          logger('⚠️ Proposal page load timeout, but continuing...');
+          return resolve(false);
+        }
+
+        setTimeout(check, 300);
+      };
+
+      check();
+    });
   },
 
   async fillEngineNumber(payload, logger) {
@@ -200,7 +193,7 @@ const ICICIProposal = {
 
     const utils = window.flowUtils || {};
     const clickFn = utils.clickElement || clickElement;
-    await clickFn(input);
+    clickFn(input);
     
     await new Promise(r => setTimeout(r, 300));
 
@@ -246,7 +239,7 @@ const ICICIProposal = {
 
     const utils = window.flowUtils || {};
     const clickFn = utils.clickElement || clickElement;
-    await clickFn(input);
+    clickFn(input);
     
     await new Promise(r => setTimeout(r, 300));
 
@@ -290,7 +283,7 @@ const ICICIProposal = {
 
     const utils = window.flowUtils || {};
     const clickFn = utils.clickElement || clickElement;
-    await clickFn(input);
+    clickFn(input);
     
     await new Promise(r => setTimeout(r, 300));
 
@@ -329,7 +322,7 @@ const ICICIProposal = {
         if (!radio.checked) {
           const utils = window.flowUtils || {};
           const clickFn = utils.clickElement || clickElement;
-          await clickFn(radio);
+          clickFn(radio);
           
           logger('✅ Checked Complete KYC radio button');
           await new Promise(r => setTimeout(r, 600));
@@ -364,7 +357,7 @@ const ICICIProposal = {
 
     const utils = window.flowUtils || {};
     const clickFn = utils.clickElement || clickElement;
-    await clickFn(input);
+    clickFn(input);
     
     await new Promise(r => setTimeout(r, 300));
 
@@ -422,35 +415,19 @@ const ICICIProposal = {
   async clickPANSubmitButton(logger) {
     logger('🔍 Looking for PAN SUBMIT button...');
 
-    const timeout = 15000;
-    const start = Date.now();
-    const utils = window.flowUtils || {};
-    const clickFn = utils.clickElement || clickElement;
-
-    while (Date.now() - start < timeout) {
-      if (window.flowUtils?.isSpinnerVisible?.()) {
-        await window.flowUtils.waitForSpinnerToFinish();
-      }
-
-      let button = document.querySelector('#pan_no_sub_btn');
-
-      if (!button || button.offsetParent === null) {
-        button = [...document.querySelectorAll('button')].find((btn) => {
-          const text = btn.textContent.trim().toUpperCase();
-          return text === 'SUBMIT' && btn.offsetParent !== null;
-        });
-      }
-
-      if (button && button.offsetParent !== null) {
-        logger('✅ Found PAN SUBMIT button');
-        highlightElement(button, '#ff9800', 1500);
-        await clickFn(button);
-        logger('✅ Clicked PAN SUBMIT button');
-        await new Promise((r) => setTimeout(r, 1000));
-        return true;
-      }
-
-      await new Promise((r) => setTimeout(r, 400));
+    const button = document.querySelector('#pan_no_sub_btn');
+    
+    if (button && button.offsetParent !== null) {
+      logger('✅ Found PAN SUBMIT button');
+      highlightElement(button, '#ff9800', 1500);
+      
+      const utils = window.flowUtils || {};
+      const clickFn = utils.clickElement || clickElement;
+      clickFn(button);
+      
+      logger('✅ Clicked PAN SUBMIT button');
+      await new Promise(r => setTimeout(r, 1000));
+      return true;
     }
 
     logger('❌ PAN SUBMIT button not found');
@@ -580,7 +557,7 @@ const ICICIProposal = {
           
           highlightElement(button, '#ff9800', 1500);
           
-          await clickFn(button);
+          clickFn(button);
           logger('✅ Clicked upload SUBMIT button');
           return resolve(true);
         }
@@ -600,20 +577,14 @@ const ICICIProposal = {
   async selectGenderTitle(payload, logger) {
     logger('🔍 Looking for title mat-select...');
 
-    const titleRaw = payload?.customerDetails?.title || payload?.title || '';
-    const title = titleRaw.toString().trim();
-
+    const title = payload?.customerDetails?.title || payload?.title || '';
+    
     if (!title) {
       logger('⚠️ No title provided in payload');
       return false;
     }
 
-    // Normalize title for matching (case-insensitive, remove dots)
-    const titleKey = title.toLowerCase().replace(/\./g, '').trim();
-    // Map common variants: 'miss' -> 'ms'
-    const titleMatchKey = titleKey === 'miss' ? 'ms' : titleKey;
-
-    logger(`📝 Title to select: ${title} (matching target: ${titleMatchKey})`);
+    logger(`📝 Title to select: ${title}`);
 
     // Wait for mat-select to appear with retries
     const timeout = 10000;
@@ -647,11 +618,9 @@ const ICICIProposal = {
 
     // Search entire body for matching option text
     const allElements = [...document.body.querySelectorAll('*')];
-    const match = allElements.find((el) => {
-      if (el.children.length !== 0) return false;
-      const txt = el.textContent.trim().toLowerCase().replace(/\./g, '').trim();
-      return txt === titleMatchKey;
-    });
+    const match = allElements.find(el => 
+      el.children.length === 0 && el.textContent.trim().toLowerCase() === title.toLowerCase()
+    );
 
     if (match) {
       const option = match.closest('mat-option') || match.closest('[role="option"]') || match;
@@ -676,14 +645,14 @@ const ICICIProposal = {
     const clickFn = utils.clickElement || clickElement;
 
     return new Promise((resolve) => {
-      const check = async () => {
+      const check = () => {
         const proceedBtn = document.querySelector('#arya_proceed_btn');
         
         if (proceedBtn && proceedBtn.offsetParent !== null) {
           logger('✅ Found proceed button');
           highlightElement(proceedBtn, '#ff9800', 1500);
           
-          await clickFn(proceedBtn);
+          clickFn(proceedBtn);
           logger('✅ Clicked proceed button');
           return resolve(true);
         }
@@ -738,7 +707,7 @@ const ICICIProposal = {
 
     const utils = window.flowUtils || {};
     const clickFn = utils.clickElement || clickElement;
-    await clickFn(input);
+    clickFn(input);
     
     await new Promise(r => setTimeout(r, 300));
 
@@ -793,7 +762,7 @@ const ICICIProposal = {
 
     const utils = window.flowUtils || {};
     const clickFn = utils.clickElement || clickElement;
-    await clickFn(input);
+    clickFn(input);
     
     await new Promise(r => setTimeout(r, 300));
 
@@ -815,87 +784,6 @@ const ICICIProposal = {
     return true;
   },
 
-  async fillFormControlField(formControlName, value, label, logger) {
-    if (!value) {
-      logger(`⚠️ No value for ${label}`);
-      return false;
-    }
-
-    logger(`🔍 Looking for ${label} field...`);
-    logger(`📝 ${label} to enter: ${value}`);
-
-    const timeout = 10000;
-    const start = Date.now();
-    let input = null;
-
-    while (Date.now() - start < timeout) {
-      if (window.flowUtils?.isSpinnerVisible?.()) {
-        await window.flowUtils.waitForSpinnerToFinish();
-      }
-      input = document.querySelector(`input[formcontrolname="${formControlName}"]`);
-      if (input) break;
-      await new Promise((r) => setTimeout(r, 300));
-    }
-
-    if (!input) {
-      logger(`❌ ${label} field not found after timeout`);
-      return false;
-    }
-
-    highlightElement(input, '#ff9800', 1500);
-
-    const utils = window.flowUtils || {};
-    const clickFn = utils.clickElement || clickElement;
-    await clickFn(input);
-    await new Promise((r) => setTimeout(r, 300));
-
-    input.focus();
-    input.value = '';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new Event('change', { bubbles: true }));
-
-    for (const char of String(value)) {
-      input.value += char;
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      await new Promise((r) => setTimeout(r, 50));
-    }
-
-    input.dispatchEvent(new Event('change', { bubbles: true }));
-    input.dispatchEvent(new Event('blur', { bubbles: true }));
-    logger(`📝 ${label} filled: ${value}`);
-    await new Promise((r) => setTimeout(r, 500));
-
-    return true;
-  },
-
-  async fillAddressLine(payload, logger) {
-    const addr = payload?.customerDetails?.address || {};
-    const building = (addr.building || '').trim();
-    const street = (addr.street || '').trim();
-    const addressLine = [building, street].filter(Boolean).join(', ').trim();
-
-    if (!addressLine) {
-      logger('⚠️ No address.building/street in payload');
-      return false;
-    }
-
-    return this.fillFormControlField('addressLine', addressLine, 'Address Line', logger);
-  },
-
-  async fillPincode(payload, logger) {
-    const pincode =
-      (payload?.customerDetails?.pincode || payload?.customerDetails?.address?.pincode || '')
-        .toString()
-        .trim();
-
-    if (!pincode) {
-      logger('⚠️ No pincode in customerDetails');
-      return false;
-    }
-
-    return this.fillFormControlField('pincode', pincode, 'Pincode', logger);
-  },
-
   async handleHypothecation(payload, logger) {
     const isHypothecated = payload?.hypothecation?.isHypothecated || false;
     
@@ -906,10 +794,8 @@ const ICICIProposal = {
 
     logger('✅ Hypothecation required, processing...');
 
-    const financierName = (payload?.hypothecation?.financierName || '')
-      .replace(/\./g, '')
-      .trim();
-
+    const financierName = payload?.hypothecation?.financierName || '';
+    
     if (!financierName) {
       logger('⚠️ No financier name provided in payload');
       return false;
@@ -992,7 +878,7 @@ const ICICIProposal = {
 
     const utils = window.flowUtils || {};
     const clickFn = utils.clickElement || clickElement;
-    await clickFn(financierInput);
+    clickFn(financierInput);
     
     await new Promise(r => setTimeout(r, 300));
 
@@ -1060,7 +946,7 @@ const ICICIProposal = {
 
     const utils = window.flowUtils || {};
     const clickFn = utils.clickElement || clickElement;
-    await clickFn(input);
+    clickFn(input);
     
     await new Promise(r => setTimeout(r, 300));
 
@@ -1096,11 +982,12 @@ function highlightElement(el, color = '#4CAF50', duration = 2000) {
   }, duration);
 }
 
-async function clickElement(el) {
-  if (window.flowUtils?.clickElement) return window.flowUtils.clickElement(el);
+function clickElement(el) {
   if (!el) return false;
   el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  if (typeof el.focus === 'function') el.focus({ preventScroll: true });
+  if (typeof el.focus === 'function') {
+    el.focus({ preventScroll: true });
+  }
   el.click();
   return true;
 }

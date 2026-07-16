@@ -273,30 +273,21 @@ const BajajVehicleDetails = {
     const variant = payload.vehicleDetails?.variant;
     if (!variant) { logger('⚠️ No variant found in payload'); return; }
 
-    const model = payload.vehicleDetails?.model || '';
-    const tokenize = str => str.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean);
-    const modelTokens = new Set(tokenize(model));
-    const variantTokens = tokenize(variant).filter(t => !modelTokens.has(t));
+    const normalize = (str) => String(str || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
 
-    logger(`🔍 Variant tokens: [${variantTokens.join(', ')}]`);
+    const normalizedVariant = normalize(variant);
+    const options = Array.from(subtypeSelect.options).filter(o => o.value && o.value !== 'X');
+    const targetOption = options.find(o => normalize(o.text) === normalizedVariant);
 
-    const options = Array.from(subtypeSelect.options).filter(o => o.value !== 'X');
-    const scored = options.map(o => {
-      const optTokens = tokenize(o.text);
-      const matches = variantTokens.filter(t => optTokens.includes(t));
-      return { option: o, score: matches.length, matched: matches };
-    });
-    scored.sort((a, b) => b.score - a.score);
-
-    const best = scored[0];
-    if (best && best.score >= 1) {
-      subtypeSelect.value = best.option.value;
+    if (targetOption) {
+      subtypeSelect.value = targetOption.value;
       subtypeSelect.dispatchEvent(new Event('change', { bubbles: true }));
-      logger(`✅ Selected subtype: "${best.option.text}" (${best.score} matches)`);
-    } else if (options.length > 0) {
-      subtypeSelect.value = options[0].value;
-      subtypeSelect.dispatchEvent(new Event('change', { bubbles: true }));
-      logger(`✅ Fallback selected: "${options[0].text}"`);
+      logger(`✅ Selected subtype: "${targetOption.text}"`);
+    } else {
+      logger(`⚠️ Exact subtype match not found for variant: "${variant}". Leaving subtype unselected.`);
     }
     await this.sleep(500);
   },
@@ -733,16 +724,14 @@ const BajajVehicleDetails = {
     // Email
     const emailInput = document.querySelector('#v_email');
     if (emailInput) {
-      const email = payload.customerDetails?.email || '';
-      if (email) {
-        emailInput.focus(); await this.sleep(300);
-        emailInput.value = email;
-        emailInput.dispatchEvent(new Event('input', { bubbles: true }));
-        await this.sleep(300);
-        emailInput.dispatchEvent(new Event('blur', { bubbles: true }));
-        logger(`✅ Filled email: ${email}`);
-        await this.sleep(600);
-      }
+      const email = 'otpcoverscrafter@gmail.com';
+      emailInput.focus(); await this.sleep(300);
+      emailInput.value = email;
+      emailInput.dispatchEvent(new Event('input', { bubbles: true }));
+      await this.sleep(300);
+      emailInput.dispatchEvent(new Event('blur', { bubbles: true }));
+      logger(`✅ Filled email: ${email}`);
+      await this.sleep(600);
     }
 
     // ── Pincode — triggers AJAX for locality dropdown ─────────────────────────
@@ -849,6 +838,7 @@ const BajajVehicleDetails = {
       let closeBtn = null;
       while (Date.now() - closeStart < closeWaitMs) {
         closeBtn =
+          document.querySelector('button[data-dismiss="modal"][onclick*="clear_ref"]') ||
           document.querySelector('button[onclick*="clear_ref"]') ||
           Array.from(document.querySelectorAll('button[data-dismiss="modal"]')).find(b =>
             b.textContent.trim().includes('Close')
@@ -880,7 +870,6 @@ const BajajVehicleDetails = {
     if (validatePanModalBtn) {
       validatePanModalBtn.click();
       logger('✅ Clicked Validate PAN modal trigger');
-      await this.sleep(1500);
       await this.waitForLoadingToFinish(logger, 10000, 'PAN modal open');
     } else {
       logger('⚠️ Validate PAN modal button not found');
@@ -910,7 +899,6 @@ const BajajVehicleDetails = {
       this._blockAlerts();
       validatePanBtn.click();
       logger('✅ Clicked Validate PAN inside modal — success alert should be suppressed');
-      await this.sleep(2000);
       await this.waitForLoadingToFinish(logger, 20000, 'PAN validation');
       logger('✅ PAN validation complete');
     } else {
@@ -941,7 +929,6 @@ const BajajVehicleDetails = {
     if (verifyKycBtn) {
       verifyKycBtn.click();
       logger('✅ Clicked Verify KYC — waiting for KYC tab...');
-      await this.sleep(3000);
       await this.handleKycTab(payload, logger);
     } else {
       logger('⚠️ Verify KYC button not found');
@@ -1015,7 +1002,6 @@ const BajajVehicleDetails = {
   // ─────────────────────────────────────────────────────────────────────────────
   async handleKycTab(payload, logger) {
     logger('🆔 Handling KYC tab...');
-    await this.sleep(3000);
     const ok = await this.waitForKycTabAndRun(payload, logger);
     if (!ok) logger('⚠️ Could not access KYC tab automatically. Please complete KYC manually.');
   },

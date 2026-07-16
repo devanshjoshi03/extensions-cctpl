@@ -12,7 +12,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let statusPollTimer = null;
   let pendingStartListener = null;
-  let currentAutomationState = null;
 
   chrome.storage.local.get(['orientalJSON'], (r) => {
     if (r.orientalJSON) jsonInput.value = r.orientalJSON;
@@ -40,7 +39,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function updateControlsUI(state) {
     if (!state) return;
-    currentAutomationState = state;
 
     controlsRow.style.display = 'flex';
     autoStatusEl.style.display = 'block';
@@ -115,7 +113,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!tab) return;
     const resp = await sendToTab(tab.id, { action: 'PAUSE_AUTOMATION' });
     if (resp?.status === 'paused') {
-      updateControlsUI({ ...(currentAutomationState || {}), isRunning: true, isPaused: true, isStopped: false });
       showStatus('⏸️ Automation paused', 'info');
       pollStatus();
     } else {
@@ -128,7 +125,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!tab) return;
     const resp = await sendToTab(tab.id, { action: 'RESUME_AUTOMATION' });
     if (resp?.status === 'resumed') {
-      updateControlsUI({ ...(currentAutomationState || {}), isRunning: true, isPaused: false, isStopped: false });
       showStatus('▶️ Automation resumed', 'info');
       pollStatus();
     } else {
@@ -141,13 +137,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!tab) return;
     const resp = await sendToTab(tab.id, { action: 'STOP_AUTOMATION' });
     if (resp?.status === 'stopped') {
-      updateControlsUI({
-        ...(currentAutomationState || {}),
-        isRunning: false,
-        isPaused: false,
-        isStopped: true,
-        currentStep: currentAutomationState?.currentStep || 'Stopped by user'
-      });
       showStatus('⛔ Automation stopped permanently', 'error');
       pollStatus();
     } else {

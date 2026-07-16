@@ -10,24 +10,7 @@
     console.log('%c[Oriental]', 'color: #e94560; font-weight: bold;', ...args);
   }
 
-  async function sleep(ms) {
-    const deadline = Date.now() + Math.max(0, Number(ms) || 0);
-    while (Date.now() < deadline) {
-      let state = null;
-      try {
-        if (typeof AutomationPauseController !== 'undefined') {
-          state = AutomationPauseController.getState();
-        }
-      } catch (_) {}
-      if (state?.isStopped) throw new Error('AUTOMATION_STOPPED');
-      while (state?.isPaused) {
-        await new Promise((r) => setTimeout(r, 100));
-        state = AutomationPauseController?.getState?.() || null;
-        if (state?.isStopped) throw new Error('AUTOMATION_STOPPED');
-      }
-      await new Promise((r) => setTimeout(r, Math.min(100, Math.max(0, deadline - Date.now()))));
-    }
-  }
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
   function waitForElement(selector, timeout = 10000, parent = document) {
     return new Promise((resolve, reject) => {

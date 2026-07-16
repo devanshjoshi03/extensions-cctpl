@@ -5,9 +5,7 @@
 
 const ICICILogin = {
   async run(payload, logger = console.log) {
-    const agent = payload?.agentDetails || {};
-    const username = agent.username || '';
-    const password = agent.password || '';
+    const { username, password } = this.getCredentials(payload);
 
     if (!username || !password) {
       logger('❌ Missing username or password');
@@ -87,10 +85,20 @@ const ICICILogin = {
     }
   },
 
+  getCredentials(payload) {
+    const agent = payload?.agentDetails || {};
+    return {
+      username: String(agent.username || '').trim(),
+      password: String(agent.password || '').trim(),
+    };
+  },
+
   isLoggedIn() {
     // Check if already logged in by looking for dashboard indicators
     const dashboardElements = document.querySelector('[class*="dashboard"], [class*="sidebar"], .profile-menu');
-    const logoutBtn = document.querySelector('button[*="logout"], a[*="logout"]');
+    const logoutBtn = document.querySelector(
+      'button[class*="logout" i], button[id*="logout" i], a[href*="logout" i], a[class*="logout" i]'
+    );
     
     return !!(dashboardElements || logoutBtn);
   },
@@ -115,6 +123,7 @@ const ICICILogin = {
     const selectors = [
       'input[formcontrolname="username"]',
       'input[name="username"]',
+      'input[placeholder="Username"]',
       'input[placeholder*="Username" i]',
       'input[placeholder*="User" i]',
       'input[type="text"]:first-of-type'
@@ -127,8 +136,7 @@ const ICICILogin = {
       const input = document.querySelector(selector);
       if (input && input.offsetParent !== null) {
         logger(`✅ Found username field: ${selector}`);
-        const utils = window.flowUtils || {};
-        await (utils.fillInput || fillInput)(input, username);
+        await fillLoginInput(input, username);
         logger(`📝 Username filled: ${username}`);
         return true;
       }
@@ -144,15 +152,18 @@ const ICICILogin = {
     const selectors = [
       'input[formcontrolname="password"]',
       'input[name="password"]',
+      'input[placeholder="Password"]',
       'input[type="password"]'
     ];
 
     for (const selector of selectors) {
+      if (window.flowUtils?.isSpinnerVisible?.()) {
+        await window.flowUtils.waitForSpinnerToFinish();
+      }
       const input = document.querySelector(selector);
       if (input && input.offsetParent !== null) {
         logger(`✅ Found password field: ${selector}`);
-        const utils = window.flowUtils || {};
-        await (utils.fillInput || fillInput)(input, password);
+        await fillLoginInput(input, password);
         logger(`📝 Password filled`);
         return true;
       }
@@ -341,6 +352,31 @@ async function fillInput(el, value) {
     el.dispatchEvent(new Event('change', { bubbles: true }));
   }
   return true;
+}
+
+async function fillLoginInput(el, value) {
+  if (!el) return false;
+  if (window.flowUtils?.beforeUiAction) {
+    await window.flowUtils.beforeUiAction();
+  }
+
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (typeof el.focus === 'function') {
+    el.focus({ preventScroll: true });
+  }
+
+  const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+  if (nativeSetter) {
+    nativeSetter.call(el, '');
+    nativeSetter.call(el, value);
+  } else {
+    el.value = value;
+  }
+
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+  el.dispatchEvent(new Event('blur', { bubbles: true }));
+  return el.value === value;
 }
 
 async function clickElement(el) {

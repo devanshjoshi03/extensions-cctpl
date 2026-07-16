@@ -7,20 +7,11 @@
 const ICICIQuote = {
   async run(payload, logger = console.log) {
     logger('🚀 Starting ICICI Lombard quote flow...');
-    logger(`📍 Current URL: ${window.location.href}`);
-
-    if (window.flowUtils?.waitForSpinnerToFinish) {
-      await window.flowUtils.waitForSpinnerToFinish(120000, () =>
-        logger('⏳ Loading spinner visible — waiting...')
-      );
-    }
+    logger('Current URL:', window.location.href);
 
     try {
       // Check if on quote page
-      const onQuote =
-        window.location.href.includes('/NysaMotor/quote') ||
-        window.location.href.includes('/#/quote');
-      if (!onQuote) {
+      if (!window.location.href.includes('/NysaMotor/quote')) {
         logger('⚠️ Not on quote page');
         return { success: false, error: 'Not on quote page' };
       }
@@ -89,24 +80,31 @@ const ICICIQuote = {
 
   async waitForQuotePageLoad(logger) {
     logger('⏳ Waiting for quote page to fully load...');
-    const utils = window.flowUtils || {};
-    if (utils.waitForPageReady) {
-      const ok = await utils.waitForPageReady(
-        () => {
-          const sidebarBtn = document.querySelector('button[onclick="openSidebar()"], .nysa_openbtn');
-          const pageIndicators = document.querySelectorAll('[class*="quote"], [class*="motor"], form');
-          return !!(sidebarBtn || pageIndicators.length > 0);
-        },
-        {
-          timeoutMs: 120000,
-          onSpinnerWait: () => logger('⏳ Spinner on screen — waiting...'),
+    
+    const timeout = 10000;
+    const start = Date.now();
+
+    return new Promise((resolve, reject) => {
+      const check = () => {
+        // Look for sidebar button or quote page elements
+        const sidebarBtn = document.querySelector('button[onclick="openSidebar()"], .nysa_openbtn');
+        const pageIndicators = document.querySelectorAll('[class*="quote"], [class*="motor"], form');
+        
+        if (sidebarBtn || pageIndicators.length > 0) {
+          logger(`✅ Quote page loaded`);
+          return resolve(true);
         }
-      );
-      if (ok) logger('✅ Quote page loaded');
-      else logger('⚠️ Quote page load timeout, but continuing...');
-      return ok;
-    }
-    return true;
+
+        if (Date.now() - start > timeout) {
+          logger('⚠️ Quote page load timeout, but continuing...');
+          return resolve(false);
+        }
+
+        setTimeout(check, 300);
+      };
+
+      check();
+    });
   },
 
   async clickSidebarButton(logger) {
@@ -121,7 +119,7 @@ const ICICIQuote = {
       
       const utils = window.flowUtils || {};
       const clickFn = utils.clickElement || clickElement;
-      await clickFn(button);
+      clickFn(button);
       
       logger('✅ Clicked on sidebar open button');
       await new Promise(r => setTimeout(r, 1000));
@@ -140,7 +138,7 @@ const ICICIQuote = {
         
         const utils = window.flowUtils || {};
         const clickFn = utils.clickElement || clickElement;
-        await clickFn(btn);
+        clickFn(btn);
         
         logger('✅ Clicked on sidebar open button');
         await new Promise(r => setTimeout(r, 1000));
@@ -160,7 +158,7 @@ const ICICIQuote = {
         
         const utils = window.flowUtils || {};
         const clickFn = utils.clickElement || clickElement;
-        await clickFn(btn);
+        clickFn(btn);
         
         logger('✅ Clicked on sidebar open button');
         await new Promise(r => setTimeout(r, 1000));
@@ -180,7 +178,7 @@ const ICICIQuote = {
         
         const utils = window.flowUtils || {};
         const clickFn = utils.clickElement || clickElement;
-        await clickFn(btn);
+        clickFn(btn);
         
         logger('✅ Clicked on sidebar open button');
         await new Promise(r => setTimeout(r, 1000));
@@ -211,7 +209,7 @@ const ICICIQuote = {
         
         const utils = window.flowUtils || {};
         const clickFn = utils.clickElement || clickElement;
-        await clickFn(link);
+        clickFn(link);
         
         logger('✅ Clicked on Two Wheeler menu');
         await new Promise(r => setTimeout(r, 1000));
@@ -234,7 +232,7 @@ const ICICIQuote = {
           
           const utils = window.flowUtils || {};
           const clickFn = utils.clickElement || clickElement;
-          await clickFn(menuLink);
+          clickFn(menuLink);
           
           logger('✅ Clicked on Two Wheeler menu');
           await new Promise(r => setTimeout(r, 1000));
@@ -257,7 +255,7 @@ const ICICIQuote = {
         
         const utils = window.flowUtils || {};
         const clickFn = utils.clickElement || clickElement;
-        await clickFn(menuLink);
+        clickFn(menuLink);
         
         logger('✅ Clicked on Two Wheeler menu');
         await new Promise(r => setTimeout(r, 1000));
@@ -279,7 +277,7 @@ const ICICIQuote = {
         
         const utils = window.flowUtils || {};
         const clickFn = utils.clickElement || clickElement;
-        await clickFn(container);
+        clickFn(container);
         
         logger('✅ Clicked on Two Wheeler menu');
         await new Promise(r => setTimeout(r, 1000));
@@ -303,7 +301,7 @@ const ICICIQuote = {
       
       const utils = window.flowUtils || {};
       const clickFn = utils.clickElement || clickElement;
-      await clickFn(packageLink);
+      clickFn(packageLink);
       
       logger('✅ Clicked on Package link');
       await new Promise(r => setTimeout(r, 1000));
@@ -319,7 +317,7 @@ const ICICIQuote = {
       
       const utils = window.flowUtils || {};
       const clickFn = utils.clickElement || clickElement;
-      await clickFn(packageLink);
+      clickFn(packageLink);
       
       logger('✅ Clicked on Package link');
       await new Promise(r => setTimeout(r, 1000));
@@ -340,7 +338,7 @@ const ICICIQuote = {
         
         const utils = window.flowUtils || {};
         const clickFn = utils.clickElement || clickElement;
-        await clickFn(link);
+        clickFn(link);
         
         logger('✅ Clicked on Package link');
         await new Promise(r => setTimeout(r, 1000));
@@ -360,7 +358,7 @@ const ICICIQuote = {
         
         const utils = window.flowUtils || {};
         const clickFn = utils.clickElement || clickElement;
-        await clickFn(link);
+        clickFn(link);
         
         logger('✅ Clicked on Package link');
         await new Promise(r => setTimeout(r, 1000));
@@ -382,7 +380,7 @@ const ICICIQuote = {
         
         const utils = window.flowUtils || {};
         const clickFn = utils.clickElement || clickElement;
-        await clickFn(link);
+        clickFn(link);
         
         logger('✅ Clicked on Package link');
         await new Promise(r => setTimeout(r, 1000));
@@ -406,7 +404,7 @@ const ICICIQuote = {
       // Click the radio input itself
       const utils = window.flowUtils || {};
       const clickFn = utils.clickElement || clickElement;
-      await clickFn(radioInput);
+      clickFn(radioInput);
       
       logger('✅ Selected New Business policy');
       await new Promise(r => setTimeout(r, 800));
@@ -428,7 +426,7 @@ const ICICIQuote = {
         
         const utils = window.flowUtils || {};
         const clickFn = utils.clickElement || clickElement;
-        await clickFn(label);
+        clickFn(label);
         
         logger('✅ Selected New Business policy');
         await new Promise(r => setTimeout(r, 800));
@@ -450,7 +448,7 @@ const ICICIQuote = {
         
         const utils = window.flowUtils || {};
         const clickFn = utils.clickElement || clickElement;
-        await clickFn(label);
+        clickFn(label);
         
         logger('✅ Selected New Business policy');
         await new Promise(r => setTimeout(r, 800));
@@ -470,7 +468,7 @@ const ICICIQuote = {
         
         const utils = window.flowUtils || {};
         const clickFn = utils.clickElement || clickElement;
-        await clickFn(input);
+        clickFn(input);
         
         logger('✅ Selected New Business policy');
         await new Promise(r => setTimeout(r, 800));
@@ -508,7 +506,7 @@ const ICICIQuote = {
     // Click the input to focus
     const utils = window.flowUtils || {};
     const clickFn = utils.clickElement || clickElement;
-    await clickFn(cityInput);
+    clickFn(cityInput);
     
     await new Promise(r => setTimeout(r, 500));
 
@@ -586,7 +584,7 @@ const ICICIQuote = {
         
         // Click the option
         await new Promise(r => setTimeout(r, 200));
-        await clickFn(option);
+        clickFn(option);
         
         logger('✅ Clicked city option from dropdown');
         await new Promise(r => setTimeout(r, 1000));
@@ -661,7 +659,7 @@ const ICICIQuote = {
 
     const utils = window.flowUtils || {};
     const clickFn = utils.clickElement || clickElement;
-    await clickFn(makeModelInput);
+    clickFn(makeModelInput);
 
     await new Promise(r => setTimeout(r, 500));
 
@@ -731,7 +729,7 @@ const ICICIQuote = {
       highlightElement(best.option, '#4caf50', 1500);
 
       await new Promise(r => setTimeout(r, 200));
-      await clickFn(best.option);
+      clickFn(best.option);
 
       logger('✅ Clicked make & model option from dropdown');
       await new Promise(r => setTimeout(r, 1000));
@@ -754,7 +752,7 @@ const ICICIQuote = {
       
       const utils = window.flowUtils || {};
       const clickFn = utils.clickElement || clickElement;
-      await clickFn(button);
+      clickFn(button);
       
       logger('✅ Clicked Get Quote button');
       await new Promise(r => setTimeout(r, 1000));
@@ -775,7 +773,7 @@ const ICICIQuote = {
         
         const utils = window.flowUtils || {};
         const clickFn = utils.clickElement || clickElement;
-        await clickFn(btn);
+        clickFn(btn);
         
         logger('✅ Clicked Get Quote button');
         await new Promise(r => setTimeout(r, 1000));
@@ -801,11 +799,12 @@ function highlightElement(el, color = '#4CAF50', duration = 2000) {
   }, duration);
 }
 
-async function clickElement(el) {
-  if (window.flowUtils?.clickElement) return window.flowUtils.clickElement(el);
+function clickElement(el) {
   if (!el) return false;
   el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  if (typeof el.focus === 'function') el.focus({ preventScroll: true });
+  if (typeof el.focus === 'function') {
+    el.focus({ preventScroll: true });
+  }
   el.click();
   return true;
 }

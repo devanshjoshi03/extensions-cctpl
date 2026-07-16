@@ -336,7 +336,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!kycTab) {
           attempts++;
           if (attempts < maxAttempts) {
-            setTimeout(poll, 500);
+            setTimeout(poll, 250);
           } else {
             console.log('[BG] KYC tab not found after 30s');
             sendResponse({ success: false, error: 'KYC tab not found' });
@@ -350,19 +350,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const waitForLoad = (tabId, cb) => {
           chrome.tabs.get(tabId, (tab) => {
             if (tab.status === 'complete') cb();
-            else setTimeout(() => waitForLoad(tabId, cb), 500);
+            else setTimeout(() => waitForLoad(tabId, cb), 250);
           });
         };
 
         waitForLoad(kycTab.id, () => {
           // Store KYC data then inject
           chrome.storage.local.set({ _bajajKycData: { dob, ovdFrontImage, ovdBackImage } }, () => {
-            // Extra 2s for page JS to render form
-            setTimeout(() => {
-              chrome.scripting.executeScript({
-                target: { tabId: kycTab.id },
-                args: [kycTab.id],
-                func: async function (kycTabId) {
+            chrome.scripting.executeScript({
+              target: { tabId: kycTab.id },
+              args: [kycTab.id],
+              func: async function (kycTabId) {
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const lockMainWorld = () =>
     new Promise((res) => {
@@ -378,7 +376,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   await lockMainWorld();
   window.alert = () => {}; window.confirm = () => true; window.prompt = () => {};
 
-  console.log('[KYC] ⏳ Waiting for DOB field...');
   let dobInput = null;
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
@@ -429,10 +426,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       cal.style.display = 'none';
     }
     console.log('[KYC] ✅ Calendar closed');
-  } else {
-    console.log('[KYC] ⚠️ DOB not filled. dobInput:', !!dobInput, 'dob:', dob);
   }
   await sleep(500);
+  console.log('[KYC] Moving through KYC form...');
 
   // ── Aadhaar → No ─────────────────────────────────────────────────────────
   const aadhaarNo = document.querySelector('#isAadhaarNo');
@@ -445,6 +441,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   // ── PAN → No ─────────────────────────────────────────────────────────────
   const panNo = document.querySelector('#isPanNo');
+  const setChecked = (el, label) => {
+    if (!el) {
+      console.log(`[KYC] ${label} not found`);
+      return false;
+    }
+    el.click();
+    el.checked = true;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    console.log(`[KYC] ${label}`);
+    return true;
+  };
   if (panNo) {
     panNo.click(); panNo.checked = true;
     panNo.dispatchEvent(new Event('change', { bubbles: true }));
@@ -463,14 +471,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   // ── Wait for form to re-render after radio changes ────────────────────────
   await sleep(1000);
+  let awaitedSingleDocInput = null;
+  const singleDocDeadline = Date.now() + 15000;
+  while (Date.now() < singleDocDeadline) {
+    awaitedSingleDocInput = document.querySelector('#ocrSingleDocumentFile');
+    if (awaitedSingleDocInput) break;
+    await sleep(300);
+  }
+  if (awaitedSingleDocInput) {
+    console.log('[KYC] Found #ocrSingleDocumentFile');
+  } else {
+    console.log('[KYC] #ocrSingleDocumentFile not found after waiting');
+  }
+  console.log('[KYC] About to prepare OVD PDF attach flow...');
 
   // ── Change Image Type to "Single Images" then back, or keep Single ──────
 // First ensure Single Image is selected (it should be by default)
-const imageTypeSelect = document.querySelector('select[name="imageType"], #imageType') ||
-  Array.from(document.querySelectorAll('select')).find(s =>
-    Array.from(s.options).some(o => o.text.includes('Single'))
-  );
-if (imageTypeSelect) {
+const imageTypeSelect = null;
+if (false && imageTypeSelect) {
   const singleOpt = Array.from(imageTypeSelect.options).find(o => 
     o.text.toLowerCase().includes('single')
   );
@@ -483,17 +501,29 @@ if (imageTypeSelect) {
 }
 
 // ── OVD PDF — request background to build it, inject result ──────────────────
+console.log('[KYC] Image type section complete, starting PDF build...');
 if (ovdFrontImage && ovdBackImage) {
   try {
-    // Ask background to build PDF (background has no CSP restrictions)
+    console.log('[KYC] Building OVD PDF from front/back images...');
     const pdfResult = await new Promise((resolve) => {
+      let settled = false;
+      const done = (value) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      const timer = setTimeout(() => done({ success: false, error: 'PDF build timed out' }), 15000);
       chrome.runtime.sendMessage(
         { action: 'BUILD_OVD_PDF', ovdFrontImage, ovdBackImage },
-        resolve
+        (response) => {
+          clearTimeout(timer);
+          done(response || { success: false, error: 'No PDF build response' });
+        }
       );
     });
 
     if (!pdfResult?.success) throw new Error(pdfResult?.error || 'PDF build failed');
+    console.log('[KYC] OVD PDF built successfully');
 
     // Convert base64 PDF back to Blob (explicit loop to avoid stack overflow)
     const raw      = atob(pdfResult.pdfB64);
@@ -502,8 +532,20 @@ if (ovdFrontImage && ovdBackImage) {
     const pdfBlob  = new Blob([pdfBytes], { type: 'application/pdf' });
     const file     = new File([pdfBlob], 'ovd_document.pdf', { type: 'application/pdf' });
 
-    const fi = document.querySelector('#ocrSingleDocumentFile');
+    const singleDocWrap = document.querySelector('#ocrSingleDocument');
+    const fi = awaitedSingleDocInput || singleDocWrap?.querySelector('#ocrSingleDocumentFile') || document.querySelector('#ocrSingleDocumentFile');
+    const chooseFileBtn = singleDocWrap?.querySelector('.ocr-single-file-upload.file-upload-btn');
     if (fi) {
+      if (chooseFileBtn) {
+        try {
+          chooseFileBtn.click();
+          console.log('[KYC] ✅ Clicked Choose File button');
+        } catch (e) {
+          console.log('[KYC] ⚠️ Choose File button click failed:', e.message);
+        }
+        await sleep(150);
+      }
+
       const origStyle = fi.getAttribute('style') || '';
       fi.style.cssText = 'display:block !important; visibility:visible !important; opacity:1 !important; position:absolute; left:-9999px;';
 
@@ -511,19 +553,32 @@ if (ovdFrontImage && ovdBackImage) {
       dt.items.add(file);
       fi.files = dt.files;
 
-      fi.dispatchEvent(new Event('change', { bubbles: true }));
+      const fileNameEl = singleDocWrap?.querySelector('#ocrSingleFileName') || document.querySelector('#ocrSingleFileName');
+      if (fileNameEl) fileNameEl.textContent = file.name;
+      if (typeof window.showSingleFileName === 'function') {
+        try { window.showSingleFileName(fi); } catch (e) {}
+      }
+
       fi.dispatchEvent(new Event('input',  { bubbles: true }));
+      fi.dispatchEvent(new Event('change', { bubbles: true }));
+      if (typeof fi.onchange === 'function') {
+        try { fi.onchange.call(fi, new Event('change', { bubbles: true })); } catch (e) {}
+      }
 
       if (typeof window.$ !== 'undefined' || typeof window.jQuery !== 'undefined') {
         const jq = window.$ || window.jQuery;
         try { jq(fi).trigger('change'); } catch(e) {}
+        try { jq('#ocrSingleDocumentFile').trigger('change'); } catch(e) {}
+      }
+      if (chooseFileBtn) {
+        chooseFileBtn.setAttribute('data-attached-file', file.name);
       }
 
       fi.setAttribute('style', origStyle);
       console.log('[KYC] ✅ OVD PDF injected, size:', file.size);
       await sleep(800);
 
-      const errMsg = document.querySelector('#ocrSingleDocumentFile-error-msg');
+      const errMsg = singleDocWrap?.querySelector('#ocrSingleDocumentFile-error-msg') || document.querySelector('#ocrSingleDocumentFile-error-msg');
       if (errMsg) errMsg.style.display = 'none';
     } else {
       console.log('[KYC] ⚠️ #ocrSingleDocumentFile not found');
@@ -596,7 +651,7 @@ if (captchaValEl) {
 }
 // NO sleep here — go straight to Upload before anything clears captcha
 
-  // ── Disclaimer checkboxes (ensure still checked) ──────────────────────────
+// ── Disclaimer checkboxes (ensure still checked) ──────────────────────────
 for (const sel of ['#self', '#self1', '#self2']) {
   const cb = document.querySelector(sel);
   if (cb && !cb.checked) {
@@ -604,7 +659,38 @@ for (const sel of ['#self', '#self1', '#self2']) {
     cb.dispatchEvent(new Event('change', { bubbles: true }));
   }
 }
+
+// ── KYC upload consents (required before Upload) ───────────────────────────
+for (const sel of ['#poiNameConsent', '#uploadConsent']) {
+  const cb = document.querySelector(sel);
+  if (!cb) {
+    console.log(`[KYC] ⚠️ Consent checkbox not found: ${sel}`);
+    continue;
+  }
+  if (!cb.checked) {
+    cb.click();
+    cb.checked = true;
+    cb.dispatchEvent(new Event('input', { bubbles: true }));
+    cb.dispatchEvent(new Event('change', { bubbles: true }));
+    console.log(`[KYC] ✅ Checked consent: ${sel}`);
+  } else {
+    console.log(`[KYC] ✅ Consent already checked: ${sel}`);
+  }
+}
 await sleep(200);
+
+const isVisible = (el) => !!(el && el.offsetParent !== null);
+const checkBox = (cb, label) => {
+  if (!cb) return false;
+  if (!cb.checked) {
+    cb.click();
+    cb.checked = true;
+    cb.dispatchEvent(new Event('input', { bubbles: true }));
+    cb.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  console.log(`[KYC] ✅ ${label}`);
+  return true;
+};
 
 // ── Click Upload (#uploadOCR) ─────────────────────────────────────────────
 console.log('[KYC] 🔘 Clicking #uploadOCR...');
@@ -612,7 +698,6 @@ const uploadBtn = document.querySelector('#uploadOCR');
 if (uploadBtn) {
   uploadBtn.click();
   console.log('[KYC] ✅ Clicked #uploadOCR');
-  await sleep(3000);
 } else {
   // Fallback: find visible orange Upload button
   const fallback = Array.from(document.querySelectorAll('button')).find(b =>
@@ -621,54 +706,75 @@ if (uploadBtn) {
   if (fallback) {
     fallback.click();
     console.log('[KYC] ✅ Clicked fallback Upload button');
-    await sleep(3000);
   } else {
     console.log('[KYC] ⚠️ Upload button not found');
   }
 }
 
-// ── Wait and click "Proceed for KYC" button ────────────────────────────────
-console.log('[KYC] ⏳ Waiting 5-10 seconds after upload...');
-await sleep(7000); // Wait 7 seconds for upload processing
-
-console.log('[KYC] 🔘 Looking for "Proceed for KYC" button...');
-const proceedBtn = document.querySelector('#ocrKycBtn') ||
-                   Array.from(document.querySelectorAll('button')).find(b =>
-                     b.textContent.trim().includes('Proceed for KYC') && b.offsetParent !== null
-                   );
-
-if (proceedBtn) {
-  await lockMainWorld();
-  proceedBtn.click();
-  console.log('[KYC] ✅ Clicked "Proceed for KYC" button');
-  await sleep(2000);
-
-  // ── Wait and click "Close" button ────────────────────────────────────────
-  console.log('[KYC] ⏳ Waiting 5 seconds after proceeding...');
-  await sleep(5000);
-
-  console.log('[KYC] 🔘 Looking for "Close" button...');
-  const closeBtn = document.querySelector('#closeModule') ||
-                   Array.from(document.querySelectorAll('button')).find(b =>
-                     b.textContent.trim().toLowerCase() === 'close' && b.offsetParent !== null
-                   );
-
-  if (closeBtn) {
-    await lockMainWorld();
-    await lockMainWorld();
-    closeBtn.click();
-    console.log('[KYC] ✅ Clicked "Close" button');
-    await sleep(1000);
-  } else {
-    console.log('[KYC] ⚠️ "Close" button not found. Available buttons:',
-      Array.from(document.querySelectorAll('button')).map(b => b.textContent.trim()));
+// ── Wait for post-upload checkboxes, then check instantly ─────────────────
+const postUploadDeadline = Date.now() + 10000;
+let postUploadReady = false;
+while (Date.now() < postUploadDeadline) {
+  const self1 = document.querySelector('#self1');
+  const self2 = document.querySelector('#self2');
+  if (isVisible(self1) && isVisible(self2)) {
+    await sleep(1200);
+    checkBox(self1, 'Checked #self1');
+    await sleep(800);
+    checkBox(self2, 'Checked #self2');
+    await sleep(1200);
+    postUploadReady = true;
+    break;
   }
-} else {
-  console.log('[KYC] ⚠️ "Proceed for KYC" button not found. Available buttons:',
-    Array.from(document.querySelectorAll('button')).map(b => b.textContent.trim()));
+  await sleep(250);
+}
+if (!postUploadReady) {
+  console.log('[KYC] ⚠️ Post-upload checkboxes not visible within 10s');
 }
 
-console.log('[KYC] ✅ KYC form filling done');
+// ── Click Proceed for KYC as soon as visible ───────────────────────────────
+const proceedDeadline = Date.now() + 10000;
+let proceedClicked = false;
+while (Date.now() < proceedDeadline) {
+  const proceedBtn = document.querySelector('#ocrKycBtn') ||
+    Array.from(document.querySelectorAll('button')).find(b =>
+      b.textContent.trim().includes('Proceed for KYC') && isVisible(b)
+    );
+  if (isVisible(proceedBtn)) {
+    await sleep(1200);
+    proceedBtn.click();
+    console.log('[KYC] ✅ Clicked #ocrKycBtn');
+    proceedClicked = true;
+    break;
+  }
+  await sleep(250);
+}
+if (!proceedClicked) {
+  console.log('[KYC] ⚠️ Proceed for KYC button not visible within 10s');
+}
+
+// ── Wait for Close button, then click instantly ────────────────────────────
+const closeDeadline = Date.now() + 10000;
+let closeClicked = false;
+while (Date.now() < closeDeadline) {
+  const closeBtn = document.querySelector('#closeModule') ||
+    Array.from(document.querySelectorAll('button')).find(b =>
+      b.textContent.trim().toLowerCase() === 'close' && isVisible(b)
+    );
+  if (isVisible(closeBtn)) {
+    await sleep(1500);
+    closeBtn.click();
+    console.log('[KYC] ✅ Clicked close button');
+    closeClicked = true;
+    break;
+  }
+  await sleep(250);
+}
+if (!closeClicked) {
+  console.log('[KYC] ⚠️ Close button not visible within 10s');
+}
+
+console.log('[KYC] ✅ KYC upload step completed.');
 }
               }, (results) => {
                 if (chrome.runtime.lastError) {
@@ -679,7 +785,6 @@ console.log('[KYC] ✅ KYC form filling done');
                   sendResponse({ success: true });
                 }
               });
-            }, 2000);
           });
         });
       });
@@ -720,12 +825,35 @@ console.log('[KYC] ✅ KYC form filling done');
         const frontJpeg = await toJpegB64(frontB64, isJpeg(frontB64));
         const backJpeg  = await toJpegB64(backB64,  isJpeg(backB64));
 
-        // Get image dimensions via OffscreenCanvas
+        // Get JPEG dimensions without createImageBitmap to avoid hanging in the worker
         const getDims = async (b64) => {
           const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-          const blob  = new Blob([bytes], { type: 'image/jpeg' });
-          const bmp   = await createImageBitmap(blob);
-          return { w: bmp.width, h: bmp.height };
+          if (bytes.length < 4 || bytes[0] !== 0xFF || bytes[1] !== 0xD8) {
+            throw new Error('Invalid JPEG image');
+          }
+          let offset = 2;
+          while (offset < bytes.length) {
+            while (offset < bytes.length && bytes[offset] !== 0xFF) offset++;
+            while (offset < bytes.length && bytes[offset] === 0xFF) offset++;
+            const marker = bytes[offset++];
+            if (marker === 0xD9 || marker === 0xDA) break;
+            if (offset + 1 >= bytes.length) break;
+            const length = (bytes[offset] << 8) | bytes[offset + 1];
+            if (length < 2) throw new Error('Invalid JPEG segment length');
+            const isSof =
+              (marker >= 0xC0 && marker <= 0xC3) ||
+              (marker >= 0xC5 && marker <= 0xC7) ||
+              (marker >= 0xC9 && marker <= 0xCB) ||
+              (marker >= 0xCD && marker <= 0xCF);
+            if (isSof) {
+              return {
+                w: (bytes[offset + 5] << 8) | bytes[offset + 6],
+                h: (bytes[offset + 3] << 8) | bytes[offset + 4]
+              };
+            }
+            offset += length;
+          }
+          throw new Error('JPEG dimensions not found');
         };
 
         const frontDims = await getDims(frontJpeg);
@@ -738,9 +866,11 @@ console.log('[KYC] ✅ KYC form filling done');
         ]);
 
         const pdfB64 = uint8ToBase64(pdfBytes);  // ✅ chunked — was btoa(String.fromCharCode(...pdfBytes))
+        console.log('[BG] BUILD_OVD_PDF completed, bytes:', pdfBytes.length);
         sendResponse({ success: true, pdfB64 });
 
       } catch (e) {
+        console.log('[BG] BUILD_OVD_PDF error:', e.message);
         sendResponse({ success: false, error: e.message });
       }
     })();

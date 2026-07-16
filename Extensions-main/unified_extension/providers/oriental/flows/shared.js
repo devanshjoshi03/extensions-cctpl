@@ -1,27 +1,8 @@
 /**
  * Shared utilities for Oriental flows (form, quote, login, etc.)
  */
-function getAutomationControlState() {
-  try {
-    if (typeof AutomationPauseController !== 'undefined' && AutomationPauseController?.getState) {
-      return AutomationPauseController.getState();
-    }
-  } catch (_) {}
-  return null;
-}
-
-async function wait(ms) {
-  const deadline = Date.now() + Math.max(0, Number(ms) || 0);
-  while (Date.now() < deadline) {
-    let state = getAutomationControlState();
-    if (state?.isStopped) throw new Error('AUTOMATION_STOPPED');
-    while (state?.isPaused) {
-      await new Promise((r) => setTimeout(r, 100));
-      state = getAutomationControlState();
-      if (state?.isStopped) throw new Error('AUTOMATION_STOPPED');
-    }
-    await new Promise((r) => setTimeout(r, Math.min(100, Math.max(0, deadline - Date.now()))));
-  }
+function wait(ms) {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 function clickElement(el) {
@@ -1406,7 +1387,6 @@ function normalizeToOrientalForm(payload) {
 
 const AutomationPauseController = {
   STORAGE_KEY: 'oriental_automation_state',
-  STATE_CHANGE_EVENT: 'coverscrafter:automation-state-change',
 
   _defaultState() {
     return {
@@ -1431,27 +1411,6 @@ const AutomationPauseController = {
 
   _saveState(state) {
     sessionStorage.setItem(this.STORAGE_KEY, JSON.stringify(state));
-    window.dispatchEvent(new CustomEvent(this.STATE_CHANGE_EVENT, {
-      detail: { storageKey: this.STORAGE_KEY }
-    }));
-  },
-
-  _waitForStateChange(timeoutMs = 50) {
-    return new Promise((resolve) => {
-      let settled = false;
-      const done = () => {
-        if (settled) return;
-        settled = true;
-        window.removeEventListener(this.STATE_CHANGE_EVENT, onChange);
-        clearTimeout(timer);
-        resolve();
-      };
-      const onChange = (event) => {
-        if (event?.detail?.storageKey === this.STORAGE_KEY) done();
-      };
-      const timer = setTimeout(done, timeoutMs);
-      window.addEventListener(this.STATE_CHANGE_EVENT, onChange);
-    });
   },
 
   // ── Snapshot & Diff ──
@@ -1563,7 +1522,7 @@ const AutomationPauseController = {
       const s = this.getState();
       if (s.isStopped) throw new Error('AUTOMATION_STOPPED');
       if (!s.isPaused) break;
-      await this._waitForStateChange();
+      await new Promise((r) => setTimeout(r, 500));
     }
   },
 
