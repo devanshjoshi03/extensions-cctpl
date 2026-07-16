@@ -827,10 +827,7 @@ const BajajVehicleDetails = {
       );
     if (saveCustomerBtn) {
       saveCustomerBtn.click();
-      logger('✅ Clicked Save Customer Id — waiting for response...');
-      await this.sleep(2000);
-      await this.waitForLoadingToFinish(logger, 20000, 'Save Customer Id');
-      await this.sleep(1200); // extra settle
+      logger('✅ Clicked Save Customer Id — watching for Close button...');
 
       logger('⏳ Waiting for Close button (post–Save Customer modal)...');
       const closeWaitMs = 15000;
@@ -845,17 +842,17 @@ const BajajVehicleDetails = {
           );
         if (closeBtn && closeBtn.offsetParent !== null) break;
         closeBtn = null;
-        await this.sleep(300);
+        await this.sleep(100);
       }
       if (closeBtn) {
         closeBtn.click();
         logger('✅ Clicked Close button');
-        await this.sleep(1000);
         await this.waitForLoadingToFinish(logger, 10000, 'close modal');
       } else {
         logger('⚠️ Close button not found after Save Customer');
+        await this.waitForLoadingToFinish(logger, 20000, 'Save Customer Id');
       }
-      await this.sleep(800);
+      await this.sleep(300);
     } else {
       logger('⚠️ Save Customer Id button not found');
     }

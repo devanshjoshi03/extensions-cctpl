@@ -9,12 +9,6 @@ const ICICIDashboard = {
     logger('🚀 Starting ICICI Lombard dashboard flow...');
     logger('Current URL:', window.location.href);
 
-    if (window.flowUtils?.waitForSpinnerToFinish) {
-      await window.flowUtils.waitForSpinnerToFinish(120000, () =>
-        logger('⏳ Loading spinner visible — waiting...')
-      );
-    }
-
     try {
       // Check if on dashboard
       if (!window.location.href.includes('/#/dashboard')) {
@@ -46,17 +40,30 @@ const ICICIDashboard = {
 
   async waitForDashboardLoad(logger) {
     logger('⏳ Waiting for dashboard to fully load...');
-    const utils = window.flowUtils || {};
-    if (utils.waitForPageReady) {
-      return utils.waitForPageReady(
-        () => document.querySelectorAll('[class*="category"], .category-details, [class*="cover"]').length > 0,
-        {
-          timeoutMs: 120000,
-          onSpinnerWait: () => logger('⏳ Spinner on screen — waiting...'),
+    
+    const timeout = 10000;
+    const start = Date.now();
+
+    return new Promise((resolve, reject) => {
+      const check = () => {
+        // Look for category elements
+        const categories = document.querySelectorAll('[class*="category"], .category-details, [class*="cover"]');
+        
+        if (categories.length > 0) {
+          logger(`✅ Dashboard loaded, found ${categories.length} category elements`);
+          return resolve(true);
         }
-      );
-    }
-    return true;
+
+        if (Date.now() - start > timeout) {
+          logger('⚠️ Dashboard load timeout, but continuing...');
+          return resolve(false);
+        }
+
+        setTimeout(check, 300);
+      };
+
+      check();
+    });
   },
 
   async clickCoverCategory(logger) {
@@ -79,7 +86,7 @@ const ICICIDashboard = {
           
           const utils = window.flowUtils || {};
           const clickFn = utils.clickElement || clickElement;
-          await clickFn(arrowElement);
+          clickFn(arrowElement);
           
           logger('✅ Clicked on arrow');
           await new Promise(r => setTimeout(r, 1000));
@@ -105,7 +112,7 @@ const ICICIDashboard = {
           
           const utils = window.flowUtils || {};
           const clickFn = utils.clickElement || clickElement;
-          await clickFn(arrowElement);
+          clickFn(arrowElement);
           
           logger('✅ Clicked on arrow');
           await new Promise(r => setTimeout(r, 1000));
@@ -131,7 +138,7 @@ const ICICIDashboard = {
           
           const utils = window.flowUtils || {};
           const clickFn = utils.clickElement || clickElement;
-          await clickFn(arrow);
+          clickFn(arrow);
           
           logger('✅ Clicked on arrow');
           await new Promise(r => setTimeout(r, 1000));
@@ -158,11 +165,12 @@ function highlightElement(el, color = '#4CAF50', duration = 2000) {
   }, duration);
 }
 
-async function clickElement(el) {
-  if (window.flowUtils?.clickElement) return window.flowUtils.clickElement(el);
+function clickElement(el) {
   if (!el) return false;
   el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  if (typeof el.focus === 'function') el.focus({ preventScroll: true });
+  if (typeof el.focus === 'function') {
+    el.focus({ preventScroll: true });
+  }
   el.click();
   return true;
 }

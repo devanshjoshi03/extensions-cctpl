@@ -5,7 +5,9 @@
 
 const ICICILogin = {
   async run(payload, logger = console.log) {
-    const { username, password } = this.getCredentials(payload);
+    const agent = payload?.agentDetails || {};
+    const username = agent.username || '';
+    const password = agent.password || '';
 
     if (!username || !password) {
       logger('❌ Missing username or password');
@@ -19,12 +21,6 @@ const ICICILogin = {
 
     logger('🚀 Starting ICICI Lombard login flow...');
     logger('Current URL:', window.location.href);
-
-    if (window.flowUtils?.waitForSpinnerToFinish) {
-      await window.flowUtils.waitForSpinnerToFinish(120000, () =>
-        logger('⏳ Loading spinner visible — waiting before login...')
-      );
-    }
 
     try {
       // Check if already on dashboard - skip login
@@ -85,20 +81,10 @@ const ICICILogin = {
     }
   },
 
-  getCredentials(payload) {
-    const agent = payload?.agentDetails || {};
-    return {
-      username: String(agent.username || '').trim(),
-      password: String(agent.password || '').trim(),
-    };
-  },
-
   isLoggedIn() {
     // Check if already logged in by looking for dashboard indicators
     const dashboardElements = document.querySelector('[class*="dashboard"], [class*="sidebar"], .profile-menu');
-    const logoutBtn = document.querySelector(
-      'button[class*="logout" i], button[id*="logout" i], a[href*="logout" i], a[class*="logout" i]'
-    );
+    const logoutBtn = document.querySelector('button[*="logout"], a[*="logout"]');
     
     return !!(dashboardElements || logoutBtn);
   },
@@ -123,20 +109,17 @@ const ICICILogin = {
     const selectors = [
       'input[formcontrolname="username"]',
       'input[name="username"]',
-      'input[placeholder="Username"]',
       'input[placeholder*="Username" i]',
       'input[placeholder*="User" i]',
       'input[type="text"]:first-of-type'
     ];
 
     for (const selector of selectors) {
-      if (window.flowUtils?.isSpinnerVisible?.()) {
-        await window.flowUtils.waitForSpinnerToFinish();
-      }
       const input = document.querySelector(selector);
       if (input && input.offsetParent !== null) {
         logger(`✅ Found username field: ${selector}`);
-        await fillLoginInput(input, username);
+        const utils = window.flowUtils || {};
+        (utils.fillInput || fillInput)(input, username);
         logger(`📝 Username filled: ${username}`);
         return true;
       }
@@ -152,18 +135,15 @@ const ICICILogin = {
     const selectors = [
       'input[formcontrolname="password"]',
       'input[name="password"]',
-      'input[placeholder="Password"]',
       'input[type="password"]'
     ];
 
     for (const selector of selectors) {
-      if (window.flowUtils?.isSpinnerVisible?.()) {
-        await window.flowUtils.waitForSpinnerToFinish();
-      }
       const input = document.querySelector(selector);
       if (input && input.offsetParent !== null) {
         logger(`✅ Found password field: ${selector}`);
-        await fillLoginInput(input, password);
+        const utils = window.flowUtils || {};
+        (utils.fillInput || fillInput)(input, password);
         logger(`📝 Password filled`);
         return true;
       }
@@ -204,7 +184,7 @@ const ICICILogin = {
           if (captchaText) {
             logger(`✅ CAPTCHA solved: ${captchaText}`);
             const utils = window.flowUtils || {};
-            await (utils.fillInput || fillInput)(captchaInput, captchaText);
+            (utils.fillInput || fillInput)(captchaInput, captchaText);
             return true;
           }
         } else {
@@ -286,7 +266,7 @@ const ICICILogin = {
         if (btn.offsetParent !== null && btn.textContent.includes('LOGIN')) {
           logger(`✅ Found login button`);
           const utils = window.flowUtils || {};
-          await (utils.clickElement || clickElement)(btn);
+          (utils.clickElement || clickElement)(btn);
           await new Promise(r => setTimeout(r, 1000));
           return true;
         }
@@ -299,7 +279,7 @@ const ICICILogin = {
       if (btn.offsetParent !== null && btn.textContent.toUpperCase().includes('LOGIN')) {
         logger(`✅ Found login button (fallback)`);
         const utils = window.flowUtils || {};
-        await (utils.clickElement || clickElement)(btn);
+        (utils.clickElement || clickElement)(btn);
         await new Promise(r => setTimeout(r, 1000));
         return true;
       }
@@ -316,10 +296,6 @@ const ICICILogin = {
       const maxAttempts = 30;
 
       const check = () => {
-        if (window.flowUtils?.isSpinnerVisible?.()) {
-          setTimeout(check, 150);
-          return;
-        }
         if (window.location.href.includes('/#/dashboard')) {
           logger('✅ Dashboard loaded');
           return resolve(true);
@@ -339,51 +315,28 @@ const ICICILogin = {
   }
 };
 
-// Fallback helpers (delegate to flowUtils when loaded)
-async function fillInput(el, value) {
-  if (window.flowUtils?.fillInput) return window.flowUtils.fillInput(el, value);
+// Helper function (if not in flowUtils)
+function fillInput(el, value) {
   if (!el) return false;
   el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   el.focus();
   el.value = '';
+  
   for (let char of value) {
     el.value += char;
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
   }
+  
   return true;
 }
 
-async function fillLoginInput(el, value) {
+function clickElement(el) {
   if (!el) return false;
-  if (window.flowUtils?.beforeUiAction) {
-    await window.flowUtils.beforeUiAction();
-  }
-
   el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   if (typeof el.focus === 'function') {
     el.focus({ preventScroll: true });
   }
-
-  const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
-  if (nativeSetter) {
-    nativeSetter.call(el, '');
-    nativeSetter.call(el, value);
-  } else {
-    el.value = value;
-  }
-
-  el.dispatchEvent(new Event('input', { bubbles: true }));
-  el.dispatchEvent(new Event('change', { bubbles: true }));
-  el.dispatchEvent(new Event('blur', { bubbles: true }));
-  return el.value === value;
-}
-
-async function clickElement(el) {
-  if (window.flowUtils?.clickElement) return window.flowUtils.clickElement(el);
-  if (!el) return false;
-  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  if (typeof el.focus === 'function') el.focus({ preventScroll: true });
   el.click();
   return true;
 }

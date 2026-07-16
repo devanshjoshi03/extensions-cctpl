@@ -776,15 +776,15 @@ if (!closeClicked) {
 
 console.log('[KYC] ✅ KYC upload step completed.');
 }
-              }, (results) => {
-                if (chrome.runtime.lastError) {
-                  console.log('[BG] ⚠️ Script inject error:', chrome.runtime.lastError.message);
-                  sendResponse({ success: false, error: chrome.runtime.lastError.message });
-                } else {
-                  console.log('[BG] ✅ KYC script injected');
-                  sendResponse({ success: true });
-                }
-              });
+            }, (results) => {
+              if (chrome.runtime.lastError) {
+                console.log('[BG] ⚠️ Script inject error:', chrome.runtime.lastError.message);
+                sendResponse({ success: false, error: chrome.runtime.lastError.message });
+              } else {
+                console.log('[BG] ✅ KYC script injected');
+                sendResponse({ success: true });
+              }
+            });
           });
         });
       });

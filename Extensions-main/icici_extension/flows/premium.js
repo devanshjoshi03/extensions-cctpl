@@ -6,13 +6,7 @@
 const ICICIPremium = {
   async run(payload, logger = console.log) {
     logger('🚀 Starting ICICI Lombard premium flow...');
-    logger(`📍 Current URL: ${window.location.href}`);
-
-    if (window.flowUtils?.waitForSpinnerToFinish) {
-      await window.flowUtils.waitForSpinnerToFinish(120000, () =>
-        logger('⏳ Loading spinner visible — waiting...')
-      );
-    }
+    logger('Current URL:', window.location.href);
 
     try {
       // Check if on premium page
@@ -111,36 +105,6 @@ const ICICIPremium = {
         }
       }
 
-      // Check if engineProtector is enabled
-      const engineProtector = payload?.covers?.engineProtector === '1' || payload?.covers?.engineProtector === true;
-      if (engineProtector) {
-        logger('✅ Engine Protect Plus is enabled');
-        clicked = await this.checkEngineProtectorCheckbox(logger);
-        if (!clicked) {
-          logger('⚠️ Failed to check Engine Protect Plus checkbox');
-        }
-      }
-
-      // Check if consumables is enabled
-      const consumables = payload?.covers?.consumables === '1' || payload?.covers?.consumables === true;
-      if (consumables) {
-        logger('✅ Consumable Cover is enabled');
-        clicked = await this.checkConsumablesCheckbox(logger);
-        if (!clicked) {
-          logger('⚠️ Failed to check Consumable Cover checkbox');
-        }
-      }
-
-      // Check if keyProtect is enabled
-      const keyProtect = payload?.covers?.keyProtect === '1' || payload?.covers?.keyProtect === true;
-      if (keyProtect) {
-        logger('✅ Key Protect is enabled');
-        clicked = await this.checkKeyProtectCheckbox(logger);
-        if (!clicked) {
-          logger('⚠️ Failed to check Key Protect checkbox');
-        }
-      }
-
       // Click Recalculate button
       clicked = await this.clickRecalculateButton(logger);
       
@@ -178,24 +142,30 @@ const ICICIPremium = {
 
   async waitForPremiumPageLoad(logger) {
     logger('⏳ Waiting for premium page to fully load...');
-    const utils = window.flowUtils || {};
-    if (utils.waitForPageReady) {
-      const ok = await utils.waitForPageReady(
-        () => {
-          const idvInput = document.querySelector('input[class*="value-input"]');
-          const planCards = document.querySelectorAll('.plan-card, [class*="plan-card"]');
-          return !!(idvInput || planCards.length > 0);
-        },
-        {
-          timeoutMs: 120000,
-          onSpinnerWait: () => logger('⏳ Spinner on screen — waiting...'),
+    
+    const timeout = 10000;
+    const start = Date.now();
+
+    return new Promise((resolve) => {
+      const check = () => {
+        const idvInput = document.querySelector('input[class*="value-input"]');
+        const planCards = document.querySelectorAll('.plan-card, [class*="plan-card"]');
+        
+        if ((idvInput || planCards.length > 0)) {
+          logger(`✅ Premium page loaded`);
+          return resolve(true);
         }
-      );
-      if (ok) logger('✅ Premium page loaded');
-      else logger('⚠️ Premium page load timeout, but continuing...');
-      return ok;
-    }
-    return true;
+
+        if (Date.now() - start > timeout) {
+          logger('⚠️ Premium page load timeout, but continuing...');
+          return resolve(false);
+        }
+
+        setTimeout(check, 300);
+      };
+
+      check();
+    });
   },
 
   async fillIDVField(payload, logger) {
@@ -224,7 +194,7 @@ const ICICIPremium = {
     // Click and clear the field
     const utils = window.flowUtils || {};
     const clickFn = utils.clickElement || clickElement;
-    await clickFn(idvInput);
+    clickFn(idvInput);
     
     await new Promise(r => setTimeout(r, 300));
 
@@ -259,7 +229,7 @@ const ICICIPremium = {
       
       const utils = window.flowUtils || {};
       const clickFn = utils.clickElement || clickElement;
-      await clickFn(button);
+      clickFn(button);
       
       logger('✅ Clicked Update button');
       await new Promise(r => setTimeout(r, 800));
@@ -286,7 +256,7 @@ const ICICIPremium = {
       
       const utils = window.flowUtils || {};
       const clickFn = utils.clickElement || clickElement;
-      await clickFn(planCard);
+      clickFn(planCard);
       
       logger('✅ Clicked on Basic Plan card');
       await new Promise(r => setTimeout(r, 1000));
@@ -315,7 +285,7 @@ const ICICIPremium = {
           
           const utils = window.flowUtils || {};
           const clickFn = utils.clickElement || clickElement;
-          await clickFn(link);
+          clickFn(link);
           
           logger('✅ Clicked Add/Remove Cover link');
           await new Promise(r => setTimeout(r, 1000));
@@ -350,7 +320,7 @@ const ICICIPremium = {
           if (!checkbox.checked) {
             const utils = window.flowUtils || {};
             const clickFn = utils.clickElement || clickElement;
-            await clickFn(checkbox);
+            clickFn(checkbox);
             
             logger('✅ Checked PA cover checkbox');
             await new Promise(r => setTimeout(r, 600));
@@ -387,7 +357,7 @@ const ICICIPremium = {
           if (!checkbox.checked) {
             const utils = window.flowUtils || {};
             const clickFn = utils.clickElement || clickElement;
-            await clickFn(checkbox);
+            clickFn(checkbox);
             
             logger('✅ Checked Zero Depreciation checkbox');
             await new Promise(r => setTimeout(r, 600));
@@ -425,7 +395,7 @@ const ICICIPremium = {
           // Click to open
           const utils = window.flowUtils || {};
           const clickFn = utils.clickElement || clickElement;
-          await clickFn(select);
+          clickFn(select);
           
           await new Promise(r => setTimeout(r, 500));
 
@@ -474,7 +444,7 @@ const ICICIPremium = {
           if (!checkbox.checked) {
             const utils = window.flowUtils || {};
             const clickFn = utils.clickElement || clickElement;
-            await clickFn(checkbox);
+            clickFn(checkbox);
             
             logger('✅ Checked Return to Invoice checkbox');
             await new Promise(r => setTimeout(r, 600));
@@ -488,102 +458,6 @@ const ICICIPremium = {
     }
 
     logger('❌ Return to Invoice checkbox not found');
-    return false;
-  },
-
-  async checkEngineProtectorCheckbox(logger) {
-    logger('🔍 Looking for Engine Protect Plus checkbox...');
-
-    const checkboxes = document.querySelectorAll('input[type="checkbox"]');
-    logger(`🔍 Searching ${checkboxes.length} checkboxes`);
-
-    for (const checkbox of checkboxes) {
-      const label = checkbox.closest('.addon-left, .addon-wrapper, label, div[class*="addon"]');
-      if (label) {
-        const text = label.textContent.trim();
-        if (text.includes('Engine Protect') || text.includes('Engine Protect Plus')) {
-          logger('✅ Found Engine Protect Plus checkbox');
-          highlightElement(label, '#ff9800', 1500);
-          if (!checkbox.checked) {
-            const utils = window.flowUtils || {};
-            const clickFn = utils.clickElement || clickElement;
-            await clickFn(checkbox);
-            logger('✅ Checked Engine Protect Plus checkbox');
-            await new Promise(r => setTimeout(r, 600));
-            return true;
-          } else {
-            logger('✅ Engine Protect Plus checkbox already checked');
-            return true;
-          }
-        }
-      }
-    }
-
-    logger('❌ Engine Protect Plus checkbox not found');
-    return false;
-  },
-
-  async checkConsumablesCheckbox(logger) {
-    logger('🔍 Looking for Consumable Cover checkbox...');
-
-    const checkboxes = document.querySelectorAll('input[type="checkbox"]');
-    logger(`🔍 Searching ${checkboxes.length} checkboxes`);
-
-    for (const checkbox of checkboxes) {
-      const label = checkbox.closest('.addon-left, .addon-wrapper, label, div[class*="addon"]');
-      if (label) {
-        const text = label.textContent.trim();
-        if (text.includes('Consumable Cover') || text.includes('Consumables')) {
-          logger('✅ Found Consumable Cover checkbox');
-          highlightElement(label, '#ff9800', 1500);
-          if (!checkbox.checked) {
-            const utils = window.flowUtils || {};
-            const clickFn = utils.clickElement || clickElement;
-            await clickFn(checkbox);
-            logger('✅ Checked Consumable Cover checkbox');
-            await new Promise(r => setTimeout(r, 600));
-            return true;
-          } else {
-            logger('✅ Consumable Cover checkbox already checked');
-            return true;
-          }
-        }
-      }
-    }
-
-    logger('❌ Consumable Cover checkbox not found');
-    return false;
-  },
-
-  async checkKeyProtectCheckbox(logger) {
-    logger('🔍 Looking for Key Protect checkbox...');
-
-    const checkboxes = document.querySelectorAll('input[type="checkbox"]');
-    logger(`🔍 Searching ${checkboxes.length} checkboxes`);
-
-    for (const checkbox of checkboxes) {
-      const label = checkbox.closest('.addon-left, .addon-wrapper, label, div[class*="addon"]');
-      if (label) {
-        const text = label.textContent.trim();
-        if (text.includes('Key Protect')) {
-          logger('✅ Found Key Protect checkbox');
-          highlightElement(label, '#ff9800', 1500);
-          if (!checkbox.checked) {
-            const utils = window.flowUtils || {};
-            const clickFn = utils.clickElement || clickElement;
-            await clickFn(checkbox);
-            logger('✅ Checked Key Protect checkbox');
-            await new Promise(r => setTimeout(r, 600));
-            return true;
-          } else {
-            logger('✅ Key Protect checkbox already checked');
-            return true;
-          }
-        }
-      }
-    }
-
-    logger('❌ Key Protect checkbox not found');
     return false;
   },
 
@@ -601,7 +475,7 @@ const ICICIPremium = {
         
         const utils = window.flowUtils || {};
         const clickFn = utils.clickElement || clickElement;
-        await clickFn(btn);
+        clickFn(btn);
         
         logger('✅ Clicked Recalculate button');
         await new Promise(r => setTimeout(r, 800));
@@ -627,7 +501,7 @@ const ICICIPremium = {
         
         const utils = window.flowUtils || {};
         const clickFn = utils.clickElement || clickElement;
-        await clickFn(btn);
+        clickFn(btn);
         
         logger('✅ Clicked Submit button');
         await new Promise(r => setTimeout(r, 1000));
@@ -653,7 +527,7 @@ const ICICIPremium = {
         
         const utils = window.flowUtils || {};
         const clickFn = utils.clickElement || clickElement;
-        await clickFn(btn);
+        clickFn(btn);
         
         logger('✅ Clicked Buy Now button');
         await new Promise(r => setTimeout(r, 1000));
@@ -679,11 +553,12 @@ function highlightElement(el, color = '#4CAF50', duration = 2000) {
   }, duration);
 }
 
-async function clickElement(el) {
-  if (window.flowUtils?.clickElement) return window.flowUtils.clickElement(el);
+function clickElement(el) {
   if (!el) return false;
   el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  if (typeof el.focus === 'function') el.focus({ preventScroll: true });
+  if (typeof el.focus === 'function') {
+    el.focus({ preventScroll: true });
+  }
   el.click();
   return true;
 }
