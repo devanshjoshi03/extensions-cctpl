@@ -104,6 +104,7 @@ const BajajVehicleDetails = {
       logger('🔍 Starting to check for "New" checkbox...');
       await this.waitForPageLoad(logger);
       await this.checkNewCheckbox(logger);
+      await this.selectSubAgentCode(logger);
       await this.selectMake(payload, logger);
       await this.selectModel(payload, logger);
       await this.selectSubtype(payload, logger);
@@ -205,6 +206,29 @@ const BajajVehicleDetails = {
       throw new Error('New checkbox not found');
     }
     await this.sleep(500);
+  },
+
+  async selectSubAgentCode(logger) {
+    logger('🧾 Selecting sub-agent code...');
+    const subAgentSelect = document.querySelector('#subAgentCode, select[name="p_userinfo.subAgentCode"]');
+    if (!subAgentSelect) throw new Error('Sub-agent dropdown not found');
+
+    const targetValue = '1GK10096605';
+    const targetText = '1GK10096605 - RAJAT BUXI';
+    const options = Array.from(subAgentSelect.options);
+    const targetOption = options.find(o => o.value === targetValue) ||
+      options.find(o => String(o.text || '').trim() === targetText);
+
+    if (!targetOption) {
+      throw new Error(`Sub-agent option "${targetText}" not found in dropdown`);
+    }
+
+    subAgentSelect.value = targetOption.value;
+    subAgentSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    logger(`✅ Selected sub-agent: ${targetOption.text}`);
+
+    await this.waitForLoadingToFinish(logger, 10000, 'sub-agent change');
+    await this.sleep(1000);
   },
 
   async selectMake(payload, logger) {
