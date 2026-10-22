@@ -4,6 +4,7 @@ document.addEventListener('DOMContentLoaded', () => {
     icici: 'providers/icici/popup.html',
     sompo: 'providers/sompo/popup.html',
     oriental: 'providers/oriental/popup.html',
+    godigit: 'providers/godigit/popup.html',
   };
 
   document.querySelectorAll('.provider-card').forEach((card) => {

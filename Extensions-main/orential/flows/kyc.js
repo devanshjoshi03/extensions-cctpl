@@ -410,7 +410,7 @@ await wait(125);
   },
 
   getVisibleProposalSyncDialog() {
-    const dialogs = Array.from(document.querySelectorAll('.successfully-popup.p-dialog, .p-dialog'));
+    const dialogs = Array.from(document.querySelectorAll('.successfully-popup.p-dialog:not(.makerchecker-popup), .p-dialog:not(.makerchecker-popup)'));
     return dialogs.find((dialog) => {
       if (!this.isVisibleElement(dialog)) return false;
       const contentText = String(dialog.textContent || '').trim().toLowerCase();
@@ -644,7 +644,9 @@ await wait(125);
     }
 
     logger(`🔐 ${contextLabel} OTP dialog detected, fetching OTP...`);
-    const otpResult = await this.fillOTPSection({}, logger, labelOverride);
+    const resolvedLabel = labelOverride
+      || (isDeclaration ? ORIENTAL_OTP_CONFIG.DECLARATION_SERVICE_LABEL : ORIENTAL_OTP_CONFIG.SERVICE_LABEL);
+    const otpResult = await this.fillOTPSection({}, logger, resolvedLabel, contextLabel);
     if (!otpResult?.success) {
       logger(`⚠️ ${contextLabel} OTP fetch/fill failed`);
       return false;
@@ -652,8 +654,10 @@ await wait(125);
 
     const closed = await waitForClose();
     if (!closed) {
-      logger(`⚠️ ${contextLabel} OTP dialog did not close after verification`);
-      return false;
+      // Verification may still be in flight, or the operator may be typing.
+      // Either way the dialog stays; wait for it instead of failing.
+      logger(`${contextLabel} OTP dialog still open - waiting for it to be completed`);
+      await waitForManualOtpCompletion(contextLabel);
     }
 
     logger(`✅ ${contextLabel} OTP verified`);
@@ -1158,62 +1162,32 @@ await wait(125);
     }
   },
 
-  async fillOTPSection(kycData, logger = console.log, labelOverride = null) {
-    // Race: fetch OTP from API vs detect manual OTP fill (dialog closes)
-    console.log('🔐 Starting OTP extraction from server (also watching for manual fill)...');
+  async fillOTPSection(kycData, logger = console.log, labelOverride = null, contextLabel = 'OTP') {
+    logger('Fetching the ' + contextLabel + ' OTP (manual entry is accepted at any point)');
 
-    const manualFillDetected = () => {
-      return new Promise((resolve) => {
-        const check = () => {
-          // If the OTP dialog is gone, user manually filled and submitted
-          const dialog = document.querySelector('#otp-dialog, .signupOTPForm');
-          const otpInputs = document.querySelectorAll('input[name^="mobile"], input[name^="otp"], input[name^="digit"], .otpinput input, .otp-input input');
-          const dialogVisible = dialog && dialog.offsetParent !== null;
-          const inputsVisible = Array.from(otpInputs).some(inp => inp.offsetParent !== null);
-          if (!dialogVisible && !inputsVisible) {
-            resolve({ manualFill: true });
-            return;
-          }
-          setTimeout(check, 500);
-        };
-        // Start checking after a brief delay to avoid false positive at start
-        setTimeout(check, 3000);
-      });
-    };
+    // fetchOTPWithRetry watches for a manual fill throughout and, if no OTP
+    // ever arrives, blocks on manual entry rather than failing - so there is
+    // no separate race to run here.
+    const otpData = await fetchOTPWithRetry({
+      labelOverride,
+      contextLabel,
+      previousOtpId: this._otpBaselineId || null,
+    });
+    this._otpBaselineId = null;
 
-    const apiFetch = (async () => {
-      const otpData = await fetchOTPWithRetry(0, labelOverride);
-      if (otpData) {
-        return { manualFill: false, otpData };
-      }
-      return null;
-    })();
-
-    const result = await Promise.race([apiFetch, manualFillDetected()]);
-
-    if (result?.manualFill) {
-      console.log('✅ OTP was filled manually by user — proceeding');
+    if (!otpData || otpData.manualFill) {
+      logger(contextLabel + ' OTP was entered manually - proceeding');
       return { success: true };
     }
 
-    if (result?.otpData) {
-      // Also check if API returned a manual fill sentinel
-      if (result.otpData.manualFill) {
-        console.log('✅ OTP dialog closed during API fetch — user filled manually');
-        return { success: true };
-      }
-      console.log('✅ OTP received from API, filling OTP fields...');
-      const fillResult = await fillOTP(result.otpData, 0, labelOverride);
-      if (!fillResult?.success) {
-        console.log('❌ OTP verification failed:', fillResult?.error || 'unknown error');
-        return { success: false, error: fillResult?.error || 'OTP verification failed' };
-      }
-    } else {
-      console.log('❌ OTP fetch failed after all retries — no OTP received from server');
-      return { success: false, error: 'OTP fetch failed' };
+    logger('Filling the ' + contextLabel + ' OTP');
+    const fillResult = await fillOTP(otpData, 0, labelOverride, contextLabel);
+    if (!fillResult?.success) {
+      return { success: false, error: fillResult?.error || 'OTP verification failed' };
     }
     return { success: true };
   },
+
   async fillKYCDetails(kycData, logger = console.log) {
     const c = kycData?.customerDetails || kycData;
     const minimumUploadBytes = 50 * 1024;
@@ -1349,7 +1323,29 @@ await wait(125);
       await wait(125);
       await this.dismissProposalSyncDialogIfPresent(logger, 2500);
       await this.setOtpSinceNow();
+      // Note the newest OTP already in the mailbox so the one the portal is
+      // about to send can be told apart from it.
+      this._otpBaselineId = await captureLatestOtpId(ORIENTAL_OTP_CONFIG.DECLARATION_SERVICE_LABEL);
       await this.clickContinue(document);
+
+      const alreadyFoundDialog = Array.from(document.querySelectorAll('.p-dialog')).find((dialog) =>
+        this.isVisibleElement(dialog)
+        && String(dialog.textContent || '').toUpperCase().includes('UNIQUE REF NO OR POLICY NO ALREADY FOUND'));
+      if (alreadyFoundDialog) {
+        const okayBtn = alreadyFoundDialog.querySelector('.pointer.footer-red, .pointer')
+          || Array.from(alreadyFoundDialog.querySelectorAll('button')).find((btn) =>
+            String(btn.textContent || '').trim().toLowerCase() === 'okay');
+        if (okayBtn) clickElement(okayBtn);
+        return { success: false, error: 'Policy already exists (UNIQUE REF NO OR POLICY NO ALREADY FOUND)' };
+      }
+
+      // A modified IDV slab sends the proposal to a checker; no OTP follows.
+      const makerCheckerEarly = await waitForMakerCheckerDialog(3000);
+      if (makerCheckerEarly) {
+        logger('Maker-checker approval dialog detected after Confirm & Buy Now');
+        await handleMakerCheckerDialog(makerCheckerEarly, logger);
+        return { success: true, approvalPending: true };
+      }
 
       let approvalDialogVisible = await this.waitForDeclarationOtpDialog(3000);
       if (!approvalDialogVisible) {
@@ -1369,11 +1365,28 @@ await wait(125);
         return { success: false, error: 'Declaration OTP verification failed' };
       }
 
+      // The checker popup can also arrive after OTP verification.
+      const makerCheckerAfterOtp = await waitForMakerCheckerDialog(3000);
+      if (makerCheckerAfterOtp) {
+        logger('Maker-checker approval dialog detected after Declaration OTP');
+        await handleMakerCheckerDialog(makerCheckerAfterOtp, logger);
+        return { success: true, approvalPending: true };
+      }
+
       return { success: true };
   },
   async selectPaymentMethod(method, logger = console.log) {
     const selectedMethod = method || 'Send Payment Link';
-    await this.waitForVisibleText(['.policy-title', 'h4'], 'choose payment method', 15000, document);
+    const paymentTitle = await this.waitForVisibleText(['.policy-title', 'h4'], 'choose payment method', 15000, document);
+    if (!paymentTitle) {
+      const makerChecker = await waitForMakerCheckerDialog(3000);
+      if (makerChecker) {
+        logger('Maker-checker approval dialog detected instead of the payment page');
+        await handleMakerCheckerDialog(makerChecker, logger);
+        return { success: true, approvalPending: true };
+      }
+      return { success: false, error: 'Payment method page not visible' };
+    }
 
     const radios = Array.from(document.querySelectorAll('input[name*="previousPolicyType"]'));
     const targetRadio = radios.find((radio) =>
@@ -1497,6 +1510,12 @@ await wait(125);
         if (!finalizeResult?.success) {
           throw new Error(finalizeResult?.error || 'KYC finalization failed');
         }
+        if (finalizeResult.approvalPending) {
+          logger('Proposal is pending checker approval; stopping before payment');
+          AutomationPauseController.markStepComplete('kyc.finalize');
+          AutomationPauseController.endRun();
+          return { success: true, approvalPending: true };
+        }
         await wait(75);
         AutomationPauseController.markStepComplete('kyc.finalize');
       } else {
@@ -1510,6 +1529,10 @@ await wait(125);
           throw new Error(paymentResult?.error || 'Payment method selection failed');
         }
         AutomationPauseController.markStepComplete('kyc.payment');
+        if (paymentResult.approvalPending) {
+          AutomationPauseController.endRun();
+          return { success: true, approvalPending: true };
+        }
       } else {
         logger('⏭️ KYC payment already completed, skipping');
       }
@@ -1521,6 +1544,7 @@ await wait(125);
         console.log('%c[Automation] ⛔ KYC automation stopped by admin', 'color: #ff0000; font-weight: bold;');
         return { success: false, error: 'Stopped by admin', stopped: true };
       }
+      AutomationPauseController.fail(e.message);
       return { success: false, error: e.message };
     }
   },

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 100" role="img" aria-labelledby="title">
+  <title id="title">ICICI Lombard General Insurance</title>
+  <defs>
+    <linearGradient id="brand-bg" x2="0" y2="1">
+      <stop offset="0" stop-color="#f47b18" />
+      <stop offset="1" stop-color="#b32635" />
+    </linearGradient>
+  </defs>
+  <rect width="220" height="100" rx="5" fill="url(#brand-bg)" />
+  <circle cx="31" cy="35" r="22" fill="#a92235" />
+  <path d="M29 18c7 0 11 7 8 13-2 4-7 7-12 9l-4 19h-9l5-27c1-5 6-14 12-14zm-9 48a5 5 0 1 1 0 10 5 5 0 0 1 0-10z" fill="#fff" />
+  <text x="59" y="42" fill="#fff" font-family="Arial, sans-serif" font-size="27" font-weight="700">ICICI</text>
+  <text x="59" y="68" fill="#fff" font-family="Arial, sans-serif" font-size="24" font-weight="400">Lombard</text>
+  <path d="M28 84h20m124 0h20" stroke="#f8d9ce" stroke-width="1.5" />
+  <text x="110" y="88" fill="#fff" font-family="Arial, sans-serif" font-size="8" letter-spacing="3" text-anchor="middle">GENERAL INSURANCE</text>
+</svg>

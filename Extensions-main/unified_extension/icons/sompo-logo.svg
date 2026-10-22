@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 72" role="img" aria-labelledby="title">
+  <title id="title">Universal Sompo General Insurance</title>
+  <rect width="320" height="72" rx="5" fill="#fff" />
+  <g fill="#f6a53a" transform="translate(7 8)">
+    <ellipse cx="24" cy="10" rx="9" ry="15" />
+    <ellipse cx="40" cy="22" rx="9" ry="15" transform="rotate(72 40 22)" />
+    <ellipse cx="34" cy="41" rx="9" ry="15" transform="rotate(144 34 41)" />
+    <ellipse cx="13" cy="39" rx="9" ry="15" transform="rotate(216 13 39)" />
+    <ellipse cx="7" cy="19" rx="9" ry="15" transform="rotate(288 7 19)" />
+    <circle cx="24" cy="26" r="7" fill="#fff" />
+  </g>
+  <text x="68" y="29" fill="#282322" font-family="Arial, sans-serif" font-size="19" font-weight="700">Universal Sompo</text>
+  <text x="68" y="49" fill="#282322" font-family="Arial, sans-serif" font-size="18" font-weight="700">General Insurance</text>
+  <text x="68" y="63" fill="#5e5551" font-family="Arial, sans-serif" font-size="9">Suraksha, Hamesha Aapke Saath</text>
+  <circle cx="293" cy="35" r="22" fill="#e6e6e6" />
+  <circle cx="293" cy="35" r="17" fill="#bd1735" stroke="#8a1029" stroke-width="2" />
+  <path d="M282 24a17 17 0 0 1 24 3" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" />
+</svg>

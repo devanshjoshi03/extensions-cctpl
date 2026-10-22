@@ -1,0 +1,12 @@
+* { box-sizing: border-box; }
+body { margin: 0; padding: 32px 20px; background: #1a1a2e; color: #e0e0e0; font: 14px "Segoe UI", sans-serif; }
+.settings { width: 100%; max-width: 500px; margin: 0 auto; }
+h1 { margin: 0 0 24px; color: #e53935; font-size: 22px; text-align: center; }
+.section { margin-bottom: 16px; padding: 16px; border: 1px solid #0f3460; border-radius: 8px; background: #16213e; }
+.section h2 { margin-bottom: 12px; color: #e53935; font-size: 14px; text-transform: uppercase; }
+.section p { margin: 0 0 12px; color: #a0a0a0; font-size: 12px; }
+label { display: block; margin: 12px 0 4px; color: #a0a0a0; font-size: 12px; text-transform: uppercase; }
+input { width: 100%; min-height: 38px; padding: 9px 10px; border: 1px solid #0f3460; border-radius: 6px; background: #1a1a2e; color: #e0e0e0; font: inherit; }
+input:focus { outline: none; border-color: #e53935; }
+button { width: 100%; min-height: 44px; margin-bottom: 12px; border: 0; border-radius: 6px; background: #e53935; color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; }
+#settings-status { min-height: 20px; color: #95d5b2; text-align: center; }

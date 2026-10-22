@@ -1,0 +1,16 @@
+* { box-sizing: border-box; }
+body { width: 360px; margin: 0; background: #f4f6f7; color: #172126; font: 14px "Segoe UI", sans-serif; }
+.container { padding: 18px; }
+h1 { margin: 0 0 14px; font-size: 20px; }
+textarea { display: block; width: 100%; min-height: 190px; margin-bottom: 12px; padding: 10px; border: 1px solid #aeb9bd; border-radius: 4px; resize: vertical; font: 12px Consolas, monospace; }
+button { min-height: 34px; padding: 7px 12px; border: 1px solid #8a999f; border-radius: 4px; background: white; color: #172126; cursor: pointer; }
+button:disabled { cursor: default; opacity: .5; }
+button.primary { width: 100%; border-color: #087e75; background: #087e75; color: white; font-weight: 600; }
+.controls { display: flex; gap: 8px; margin-top: 12px; }
+.controls button { flex: 1; }
+.status-row { display: flex; gap: 10px; align-items: baseline; margin-top: 12px; padding-top: 10px; border-top: 1px solid #d1d9dc; }
+#auto-step { color: #526168; }
+.message { min-height: 18px; margin-top: 10px; color: #526168; font-size: 12px; }
+.log-panel { margin-top: 10px; border-top: 1px solid #d1d9dc; padding-top: 9px; }
+.log-panel h2 { margin: 0 0 6px; font-size: 12px; }
+#logs-output { max-height: 125px; overflow: auto; padding: 8px; border: 1px solid #d1d9dc; border-radius: 4px; background: #fff; color: #34434a; font: 11px/1.45 Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }

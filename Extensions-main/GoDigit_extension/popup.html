@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Go Digit Automation</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="container">
+    <h1>Go Digit</h1>
+    <textarea id="json-input" rows="12" placeholder='Paste payload with agentDetails.username and agentDetails.usercode'></textarea>
+    <button id="start-btn" class="primary">Start login</button>
+    <div id="automation-controls" class="controls" style="display:none">
+      <button id="pause-btn" disabled>Pause</button>
+      <button id="resume-btn" disabled style="display:none">Resume</button>
+      <button id="stop-btn" disabled>Stop</button>
+    </div>
+    <div id="auto-status" class="status-row" style="display:none">
+      <strong id="auto-badge">Idle</strong>
+      <span id="auto-step">Ready</span>
+    </div>
+    <div id="status" role="status" class="message"></div>
+    <section class="log-panel">
+      <h2>Activity</h2>
+      <pre id="logs-output" aria-live="polite">Loading activity...</pre>
+    </section>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

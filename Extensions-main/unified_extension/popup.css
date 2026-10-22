@@ -81,6 +81,28 @@ body {
   line-height: 1;
 }
 
+.provider-logo {
+  height: 44px;
+  max-width: 100%;
+  object-fit: contain;
+  object-position: left center;
+}
+
+.provider-logo--sompo,
+.provider-logo--icici {
+  width: 100%;
+}
+
+.provider-logo--oriental {
+  width: 44px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.provider-logo--godigit {
+  width: 110px;
+}
+
 .provider-name {
   font-size: 13px;
   font-weight: 600;

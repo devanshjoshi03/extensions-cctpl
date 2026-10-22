@@ -9,7 +9,7 @@
 <body>
   <div class="config-hub">
     <h1>⚙️ CoversCrafter Settings</h1>
-    <p class="intro">OpenAI API key is shared across all insurers. Other settings are per insurer.</p>
+    <p class="intro">OpenAI settings and the default OTP service API key are shared across insurers. Other settings are per insurer.</p>
 
     <section class="shared-section">
       <h2>Shared (all insurers)</h2>
@@ -21,6 +21,8 @@
         <option value="gpt-4o-mini">gpt-4o-mini</option>
         <option value="gpt-4-turbo">gpt-4-turbo</option>
       </select>
+      <label for="otp-service-api-key">Default OTP Service API Key</label>
+      <input type="password" id="otp-service-api-key" autocomplete="off">
       <button type="button" id="save-shared" class="btn">Save shared settings</button>
       <div id="shared-status" class="status hidden"></div>
     </section>
@@ -31,6 +33,7 @@
       <a class="link-card" href="providers/icici/config.html">ICICI Lombard</a>
       <a class="link-card" href="providers/sompo/config.html">Universal Sompo</a>
       <a class="link-card" href="providers/oriental/config.html">Oriental Insurance</a>
+      <a class="link-card" href="providers/godigit/config.html">Go Digit</a>
     </section>
   </div>
   <script src="config.js"></script>

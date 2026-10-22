@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Go Digit Insurance Automation",
+  "version": "1.0.0",
+  "description": "Automates Go Digit phone login and OTP request setup",
+  "permissions": ["activeTab", "storage", "tabs"],
+  "host_permissions": [
+    "https://accounts.godigit.com/*",
+    "https://plus.godigit.com/*",
+    "https://otpservice.coverscrafter.com/*"
+  ],
+  "options_page": "config.html",
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html" },
+  "content_scripts": [
+    {
+      "matches": ["https://accounts.godigit.com/*", "https://plus.godigit.com/*"],
+      "js": ["flows/shared.js", "flows/login.js", "flows/motor.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

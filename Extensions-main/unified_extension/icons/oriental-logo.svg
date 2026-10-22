@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-labelledby="title">
+  <title id="title">The Oriental Insurance Company Limited</title>
+  <defs>
+    <path id="top-arc" d="M 14,60 A 46,46 0 0 1 106,60" />
+    <path id="bottom-arc" d="M 106,60 A 46,46 0 0 1 14,60" />
+  </defs>
+  <circle cx="60" cy="60" r="58" fill="#fff" stroke="#18247f" stroke-width="2.5" />
+  <circle cx="60" cy="60" r="52" fill="none" stroke="#18247f" stroke-width="1.5" />
+  <text fill="#18247f" font-family="Arial, Nirmala UI, sans-serif" font-size="5.7" font-weight="700" text-anchor="middle">
+    <textPath href="#top-arc" startOffset="50%">दि ओरिएंटल इंश्योरेंस कंपनी लिमिटेड</textPath>
+  </text>
+  <text fill="#18247f" font-family="Arial, sans-serif" font-size="5.2" font-weight="700" letter-spacing=".35" text-anchor="middle">
+    <textPath href="#bottom-arc" startOffset="50%">THE ORIENTAL INSURANCE COMPANY LIMITED</textPath>
+  </text>
+  <g fill="#18247f">
+    <path d="M60 10l2 4-2 4-2-4zM60 102l2 4-2 4-2-4zM10 60l4-2 4 2-4 2zM102 60l4-2 4 2-4 2z" />
+    <circle cx="20" cy="27" r="1.5" />
+    <circle cx="100" cy="27" r="1.5" />
+    <circle cx="20" cy="93" r="1.5" />
+    <circle cx="100" cy="93" r="1.5" />
+  </g>
+  <circle cx="60" cy="60" r="27" fill="#fff" stroke="#18247f" stroke-width="2" />
+  <circle cx="60" cy="60" r="21" fill="none" stroke="#18247f" stroke-width="1" />
+  <path fill="#18247f" d="M60 39l4.2 14.8L79 48l-8.2 13.2L86 65.5l-15.3 3.1L77 83l-13-8.4L60 90l-4-15.4L43 83l6.2-14.4L34 65.5l15.2-4.3L41 48l14.8 5.8z" />
+  <circle cx="60" cy="64" r="6" fill="#fff" stroke="#18247f" stroke-width="1.5" />
+  <circle cx="60" cy="64" r="2" fill="#18247f" />
+</svg>
