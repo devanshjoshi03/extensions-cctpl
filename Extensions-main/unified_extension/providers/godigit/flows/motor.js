@@ -1,4 +1,7 @@
 const GoDigitMotorFlow = {
+  // Every proposal goes out under this address so the portal's mails land in the
+  // OTP inbox; the customer's own email in the payload is deliberately ignored.
+  DEFAULT_CUSTOMER_EMAIL: 'support@coverscrafter.com',
   async run(payload, logger = console.log) {
     await this.navigateToMotorFromHome(logger);
     const vehicle = payload?.vehicleDetails || {};
@@ -58,8 +61,15 @@ const GoDigitMotorFlow = {
     await this.typeIntoField('input[formcontrolname="chassisNumber"], input[name="chassisNumber"], #chassisg, #chassisNumber', vehicleInfo.chassisNumber, 'Chassis number', true);
     if (customer.city) await this.selectAutocomplete('#city', customer.city, 'Customer city');
     if (customer.pincode) await this.selectAutocomplete('#pincode', customer.pincode, 'Customer pincode');
-    await this.submitQuote(payload, logger);
-    return { success: true, formFilled: true, quoteSubmitted: true, bharatRegistration };
+    const saved = await this.submitQuote(payload, logger);
+    return {
+      success: true,
+      formFilled: true,
+      quoteSubmitted: true,
+      quoteSaved: Boolean(saved?.quoteSaved),
+      quoteNumber: saved?.quoteNumber || null,
+      bharatRegistration
+    };
   },
   async navigateToMotorFromHome(logger) {
     const isVisible = (element) => element &&
@@ -208,7 +218,7 @@ const GoDigitMotorFlow = {
       await wait(250);
     }
     if (Date.now() >= deadline) throw new Error('Timed out waiting for Go Digit Get Quote loading to complete');
-    await this.fillQuoteDetails(payload, logger);
+    return this.fillQuoteDetails(payload, logger);
   },
   async fillQuoteDetails(payload, logger) {
     const vehicle = payload?.vehicleDetails || {};
@@ -355,7 +365,6 @@ const GoDigitMotorFlow = {
     const fullName = customer.fullName || customer.name ||
       [customer.firstName, customer.lastName].filter(Boolean).join(' ');
     const mobile = customer.mobileNumber || customer.mobile || customer.phone;
-    const email = customer.emailID || customer.email;
     const address = typeof customer.address === 'string'
       ? customer.address
       : customer.address && typeof customer.address === 'object'
@@ -372,7 +381,7 @@ const GoDigitMotorFlow = {
         : '';
     await this.typeIntoField('#customerDetails input[name="firstName"]', fullName, 'Customer full name', true);
     await this.typeIntoField('#customerDetails input[name="mobileNumber"]', mobile, 'Customer mobile number', true);
-    await this.typeIntoField('#customerDetails input[name="emailID"]', email, 'Customer email', true);
+    await this.typeIntoField('#customerDetails input[name="emailID"]', this.DEFAULT_CUSTOMER_EMAIL, 'Customer email', true);
     await this.typeIntoField('#customerDetails textarea[name="address"]', address, 'Customer address', true);
 
     const gst = customer.GST || customer.gst || customer.gstin || customer.gstNumber;
@@ -383,6 +392,81 @@ const GoDigitMotorFlow = {
     const nomineeAbstention = await this.waitForElement('#isNomineeDetailsRequired-input', 15000);
     await this.setCheckbox(nomineeAbstention, true, 'Nominee details abstention');
     logger('Customer details filled; bank details and nomination declined.');
+    await this.skipKycVerification(logger);
+    await this.fillProposalVehicleDetails(payload, logger);
+  },
+  // Fast track KYC is declined here: tick "I will complete KYC verification
+  // process later" so the proposal continues without PAN/DOB. The CKYC consent
+  // checkbox above it is already ticked by the portal, so leave it alone.
+  async skipKycVerification(logger) {
+    const skipKyc = await this.waitForElement('input[name="skipKycVerification"]', 20000);
+    await this.setCheckbox(skipKyc, true, 'Skip KYC verification');
+    logger('Fast track KYC skipped; KYC will be completed later.');
+  },
+  // Proposal-stage Vehicle Details. Hypothecation takes the financier NAME only
+  // (the portal has no address field here). Dealer Name is mandatory, so it
+  // falls back to NA - "N/A" is rejected because the portal disallows "/".
+  async fillProposalVehicleDetails(payload, logger) {
+    const vehicle = payload?.vehicleDetails || {};
+    const hypothecation = payload?.hypothecation || {};
+    const isHypothecated = hypothecation.isHypothecated === true ||
+      ['true', '1', 'yes'].includes(String(hypothecation.isHypothecated).trim().toLowerCase());
+    if (isHypothecated) {
+      const financierName = String(hypothecation.financierName || hypothecation.name || '').trim();
+      if (!financierName) throw new Error('hypothecation.financierName is required when hypothecation.isHypothecated is true');
+      await this.typeIntoField('#hypothecation, input[formcontrolname="hypothecation"]', financierName, 'Hypothecation', true);
+      logger(`Filled hypothecation financier name: ${financierName}.`);
+    }
+    const dealerName = String(vehicle.dealerName || '').trim() || 'NA';
+    await this.typeIntoField('input[formcontrolname="dealerName"], input[name="dealerName"]', dealerName, 'Dealer name', true);
+    logger(`Vehicle details filled; dealer name "${dealerName}".`);
+    return this.saveQuote(logger);
+  },
+  // Final step: click Save Quote. The portal then swaps the footer to a disabled
+  // Save Quote plus a Generate Policy button - that button is our proof the
+  // proposal was accepted, so we only read it back and never click it.
+  async saveQuote(logger) {
+    const findButton = (text) => [...document.querySelectorAll('button')]
+      .find((button) => button.offsetParent !== null && this.normalize(button.textContent) === text);
+    const generatePolicyReadyBefore = Boolean(findButton('generate policy'));
+    await this.waitForCondition(() => findButton('save quote'), 'Go Digit Save Quote button was not found', 20000);
+    const saveButton = await this.waitForCondition(
+      () => { const button = findButton('save quote'); return button && !button.disabled ? button : null; },
+      'Go Digit Save Quote button stayed disabled; the proposal form is still incomplete',
+      20000
+    );
+    await AutomationPauseController.checkpoint('Save Quote');
+    this.scrollToCenter(saveButton);
+    (findButton('save quote') || saveButton).click();
+    logger('Clicked Save Quote; waiting for the portal to save the proposal.');
+    await wait(500);
+    await this.waitForRecalcIdle(logger);
+    const generatePolicyButton = await this.waitForCondition(
+      () => findButton('generate policy'),
+      'Go Digit did not show the Generate Policy button after Save Quote; the proposal was not saved',
+      60000
+    );
+    // Belt and braces when Generate Policy was already on screen beforehand:
+    // a saved proposal also locks the Save Quote button.
+    if (generatePolicyReadyBefore) {
+      await this.waitForCondition(
+        () => { const button = findButton('save quote'); return !button || button.disabled; },
+        'Go Digit Save Quote stayed enabled after clicking it; the proposal was not saved',
+        30000
+      );
+    }
+    const quoteNumber = this.readQuoteNumber();
+    logger(quoteNumber
+      ? `Quote saved as ${quoteNumber}; Generate Policy is available (not clicking it).`
+      : 'Quote saved; Generate Policy is available (not clicking it).');
+    return { quoteSaved: Boolean(generatePolicyButton), quoteNumber };
+  },
+  // Footer quote block: "Quote No." above the number itself.
+  readQuoteNumber() {
+    const quoteBlock = [...document.querySelectorAll('.quoteDiv')]
+      .find((element) => element.getClientRects().length > 0 && /quote\s*no/i.test(element.textContent));
+    const number = quoteBlock?.querySelector('.premium_txt')?.textContent.trim();
+    return number || null;
   },
   async setCheckbox(input, checked, label) {
     await AutomationPauseController.checkpoint(`Set ${label}`);
