@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "CoversCrafter Insurance Automation",
   "version": "1.0.0",
-  "description": "Unified automation for Bajaj, ICICI Lombard, Universal Sompo, and Oriental Insurance portals",
+  "description": "Unified automation for Bajaj, ICICI Lombard, Universal Sompo, Oriental Insurance, and Go Digit portals",
   "permissions": [
     "activeTab",
     "storage",
@@ -23,6 +23,7 @@
     "https://*.universalsompo.com/*",
     "https://orientalinsurance.org.in/*",
     "https://*.orientalinsurance.org.in/*",
+    "https://accounts.godigit.com/*",
     "https://otpservice.coverscrafter.com/*",
     "https://instapolicy.coverscrafter.com/*",
     "https://dealer.coverscrafter.com/*",
@@ -61,6 +62,7 @@
         "https://*.bajajgeneral.com/*"
       ],
       "js": [
+        "providers/bajaj/flows/humanize.js",
         "providers/bajaj/flows/shared.js",
         "providers/bajaj/flows/login.js",
         "providers/bajaj/flows/form.js",
@@ -129,6 +131,16 @@
         "providers/oriental/flows/form.js",
         "providers/oriental/flows/kyc.js",
         "providers/oriental/content.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://accounts.godigit.com/*", "https://plus.godigit.com/*"],
+      "js": [
+        "providers/godigit/flows/shared.js",
+        "providers/godigit/flows/login.js",
+        "providers/godigit/flows/motor.js",
+        "providers/godigit/content.js"
       ],
       "run_at": "document_idle"
     }

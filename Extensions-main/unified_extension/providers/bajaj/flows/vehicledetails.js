@@ -619,36 +619,48 @@ const BajajVehicleDetails = {
     this._blockAlerts();
     window.alert = () => {}; window.confirm = () => true; window.prompt = () => {};
 
+    // Wander the cursor while the form is being filled so the tracker never
+    // records a flat "Linear" cursorMovementPattern.
+    if (window.Humanize) window.Humanize.startAmbientMovement();
+
     await this.sleep(2000);
     await this.waitForLoadingToFinish(logger, 15000, 'issuance form load');
 
-    // Engine number
+    // Engine number — paste it the way a person would (Ctrl+V => "copied").
     const engineNumberInput = document.querySelector('#v_engineNo');
     if (engineNumberInput) {
       const engineNumber = payload.vehicleInformation?.engineNumber || '';
       if (engineNumber) {
-        engineNumberInput.focus(); await this.sleep(300);
-        engineNumberInput.value = engineNumber;
-        engineNumberInput.dispatchEvent(new Event('input', { bubbles: true }));
-        await this.sleep(300);
-        engineNumberInput.dispatchEvent(new Event('blur', { bubbles: true }));
+        if (window.Humanize) {
+          await window.Humanize.paste(engineNumberInput, engineNumber);
+        } else {
+          engineNumberInput.focus(); await this.sleep(300);
+          engineNumberInput.value = engineNumber;
+          engineNumberInput.dispatchEvent(new Event('input', { bubbles: true }));
+          await this.sleep(300);
+          engineNumberInput.dispatchEvent(new Event('blur', { bubbles: true }));
+        }
         logger(`✅ Filled engine number: ${engineNumber}`);
-        await this.sleep(600);
+        await this.sleep(rand(500, 900));
       }
     }
 
-    // Chassis number
+    // Chassis number — same: paste with Ctrl+V.
     const chassisNumberInput = document.querySelector('#v_chassisNo');
     if (chassisNumberInput) {
       const chassisNumber = payload.vehicleInformation?.chassisNumber || '';
       if (chassisNumber) {
-        chassisNumberInput.focus(); await this.sleep(300);
-        chassisNumberInput.value = chassisNumber;
-        chassisNumberInput.dispatchEvent(new Event('input', { bubbles: true }));
-        await this.sleep(300);
-        chassisNumberInput.dispatchEvent(new Event('blur', { bubbles: true }));
+        if (window.Humanize) {
+          await window.Humanize.paste(chassisNumberInput, chassisNumber);
+        } else {
+          chassisNumberInput.focus(); await this.sleep(300);
+          chassisNumberInput.value = chassisNumber;
+          chassisNumberInput.dispatchEvent(new Event('input', { bubbles: true }));
+          await this.sleep(300);
+          chassisNumberInput.dispatchEvent(new Event('blur', { bubbles: true }));
+        }
         logger(`✅ Filled chassis number: ${chassisNumber}`);
-        await this.sleep(600);
+        await this.sleep(rand(500, 900));
       }
     }
 

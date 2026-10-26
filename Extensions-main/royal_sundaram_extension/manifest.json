@@ -1,0 +1,61 @@
+{
+  "manifest_version": 3,
+  "name": "Royal Sundaram Insurance Automation",
+  "version": "1.0.0",
+  "description": "Automates Royal Sundaram insurance workflows",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting",
+    "tabs",
+    "downloads"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "https://otpservice.coverscrafter.com/*",
+    "https://instapolicy.coverscrafter.com/*",
+    "https://dealer.coverscrafter.com/*",
+    "https://api.openai.com/*"
+  ],
+  "options_page": "config.html",
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.svg",
+      "48": "icons/icon48.svg",
+      "128": "icons/icon128.svg"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.svg",
+    "48": "icons/icon48.svg",
+    "128": "icons/icon128.svg"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://ilounge.royalsundaram.in/*",
+        "https://kyc.royalsundaram.in/*"
+      ],
+      "js": ["page-download-guard.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://ilounge.royalsundaram.in/*",
+        "https://kyc.royalsundaram.in/*"
+      ],
+      "js": ["flows/automation-controller.js", "flows/login.js", "flows/dashboard.js", "flows/rating-calculator.js", "flows/get-quote.js", "flows/select-plan.js", "flows/coverages.js", "flows/vehicle-details.js", "flows/proposer-details.js", "flows/vehicle-summary.js", "flows/vehicle-summary-proposer.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

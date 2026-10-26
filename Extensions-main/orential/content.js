@@ -1,8 +1,11 @@
 (function () {
   'use strict';
 
-  const OTP_MAX_ATTEMPTS = 6;
-  const OTP_INTERVAL = 15000;
+  // Kept in step with ORIENTAL_OTP_CONFIG in flows/shared.js, which mirrors
+  // the Playwright target. These belong to the standalone handleOTP() path
+  // below; the KYC flow uses the shared helpers.
+  const OTP_MAX_ATTEMPTS = 5;
+  const OTP_INTERVAL = 10000;
   const CAPTCHA_MAX_ATTEMPTS = 3;
   let currentStartRunId = 0;
 
@@ -333,12 +336,20 @@
   async function performLogin(payload, runId) {
     const creds = payload.agentDetails;
     assertCurrentRun(runId);
+    if (typeof AutomationPauseController !== 'undefined') {
+      AutomationPauseController.startRun();
+    }
     log('🚀 Starting login...');
     log('Username:', creds.username);
 
     try {
       await sleep(1000);
       assertCurrentRun(runId);
+
+      if (typeof dismissLanguageWelcome === 'function') {
+        await dismissLanguageWelcome(5000);
+        assertCurrentRun(runId);
+      }
 
       const banner = document.querySelector('.homepage-banner-popup');
       if (banner) {
@@ -455,6 +466,9 @@
       return { success: true };
     } catch (err) {
       log('❌ Failed:', err.message);
+      if (typeof AutomationPauseController !== 'undefined' && err.message !== 'AUTOMATION_SUPERSEDED') {
+        AutomationPauseController.fail('Login: ' + err.message);
+      }
       return { success: false, error: err.message };
     }
   }
@@ -465,8 +479,14 @@
     await chrome.storage.local.remove(['clickGetQuoteAfterLoad', 'orientalFormPayload']);
     const formPayload = r.orientalFormPayload || {};
     try {
+      if (typeof dismissLanguageWelcome === 'function') {
+        await dismissLanguageWelcome(4000);
+      }
+
       log('🔍 Selecting Brand New Vehicle...');
-      const brandNewRadio = await waitForElement('input[value="BRAND_NEW"]', 10000)
+      const brandNewSelector = (typeof ORIENTAL_SELECTORS !== 'undefined' && ORIENTAL_SELECTORS.brandNewVehicleRadio)
+        || 'input[value="BRAND_NEW"]';
+      const brandNewRadio = await waitForElement(brandNewSelector, 10000)
         .catch(() => waitForElementByText('label', 'Brand New Vehicle', 5000));
       if (brandNewRadio) {
         const el = brandNewRadio.matches('input') ? brandNewRadio : brandNewRadio.querySelector('input') || brandNewRadio;
@@ -483,22 +503,35 @@
         log('✅ Clicked Get Quote button');
         await sleep(1000);
 
+        let formResult = null;
         if (typeof OrientalForm !== 'undefined' && OrientalForm.run) {
           log('📋 Starting Oriental form section...');
           if (typeof AutomationPauseController !== 'undefined') {
             AutomationPauseController.startRun();
           }
-          const formResult = await OrientalForm.run(formPayload, log);
+          formResult = await OrientalForm.run(formPayload, log);
           log(formResult?.success ? '✅ Form flow complete' : '⚠️ Form flow:', formResult?.error || 'done');
         } else {
           log('⚠️ OrientalForm not available');
         }
-        
+
+        if (!formResult?.success) {
+          log('⛔ Skipping KYC: the quote flow did not complete');
+          if (typeof AutomationPauseController !== 'undefined' && formResult?.error && !formResult.stopped) {
+            AutomationPauseController.fail(formResult.error);
+          }
+          return;
+        }
+        if (formResult.approvalPending) {
+          log('🔔 Proposal sent for checker approval; KYC cannot continue on this run');
+          return;
+        }
+
         if (typeof OrientalKYC !== 'undefined' && OrientalKYC.run) {
           log('📋 Starting Oriental KYC section...');
-          const kycResult = await OrientalKYC.run({...formPayload,
-            // proposalNumber:"R/211200/31/2026/PRTL/16480917"
-
+          const kycResult = await OrientalKYC.run({
+            ...formPayload,
+            proposalNumber: formResult.proposalNumber || formPayload.proposalNumber,
           }, log);
           log(kycResult?.success ? '✅ KYC flow complete' : '⚠️ KYC flow:', kycResult?.error || 'done');
         } else {
@@ -507,6 +540,9 @@
       }
     } catch (e) {
       log('⚠️ Failed:', e.message);
+      if (typeof AutomationPauseController !== 'undefined') {
+        AutomationPauseController.fail(e.message);
+      }
     }
   }
 
@@ -559,6 +595,12 @@
   });
 
   log('📌 Loaded on:', window.location.href);
+
+  // Dismiss the language chooser as soon as the content script runs: it
+  // covers the whole page, so nothing below it is clickable while it is up.
+  if (typeof startLanguageWelcomeWatcher === 'function') {
+    startLanguageWelcomeWatcher();
+  }
 
   // Inject the floating pause/resume panel
   if (typeof AutomationPauseController !== 'undefined') {

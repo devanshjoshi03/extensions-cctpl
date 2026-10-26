@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" role="img" aria-label="Royal Sundaram">
+  <defs>
+    <linearGradient id="royalBg48" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#0f766e"/>
+    </linearGradient>
+  </defs>
+  <rect width="48" height="48" rx="12" fill="url(#royalBg48)"/>
+  <path d="M9 14.2 14.7 9.8 24 16.4l9.3-6.6 5.7 4.4-3 8.2H12l-3-8.2Z" fill="#fbbf24"/>
+  <path d="M14.5 25h7.4c2.9 0 4.8 1.5 4.8 3.9 0 1.7-.9 2.9-2.4 3.5l3.1 5.6h-4.9L20 33.1h-1.7V38h-3.8V25Zm3.8 3v2.5h3c1 0 1.6-.4 1.6-1.2 0-.9-.6-1.3-1.6-1.3h-3Z" fill="#f8fafc"/>
+  <path d="M28.2 25h9.4v3.1H31.9v1.9h4.9v3H31.9v2h5.8V38h-9.5V25Z" fill="#f8fafc"/>
+</svg>

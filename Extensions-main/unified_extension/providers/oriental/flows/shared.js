@@ -199,17 +199,20 @@ function waitForSkeletonsToDisappear(timeoutMs = 15000) {
     '.loading-spinner',
     '.loader',
     '.p-blockui',
-    '[class*="skeleton"]'
+    '.overlay',
+    '.loading-overlay'
   ];
   const start = Date.now();
   return new Promise((resolve) => {
     function check() {
-      const stillLoading = loadingSelectors.some(sel => {
+      // Rendered plan cards mean the slide is ready even if a decorative
+      // skeleton is still in the DOM.
+      const planCardsVisible = Array.from(document.querySelectorAll('.choose-plan'))
+        .some((el) => isElementVisible(el));
+      const stillLoading = planCardsVisible ? false : loadingSelectors.some(sel => {
         const els = document.querySelectorAll(sel);
         for (const el of els) {
-          if (el && (el.offsetParent !== null || el.getAttribute('aria-hidden') === 'true')) {
-            return true;
-          }
+          if (isElementVisible(el)) return true;
         }
         return false;
       });
@@ -839,138 +842,324 @@ function generateForm60Pdf(form60Data) {
   return new File([blob], 'form60.pdf', { type: 'application/pdf' });
 }
 
-async function selectPrimeAutocomplete(inputSelector, value) {
-  if (!value) {
-    console.log('⚠️ selectPrimeAutocomplete: No value provided');
+/**
+ * Replaces the contents of a PrimeNG InputNumber (IDV, NDP discount,
+ * underwriting discount).
+ *
+ * These are NOT plain inputs. Assigning through the native value setter only
+ * changes the DOM; the component keeps its own model and re-renders from it
+ * on the next keystroke, so the new digits land *after* the old ones - the
+ * portal pre-fills IDV with its maximum, and typing 62416 over 67468 gives
+ * 6746862416. Clearing through execCommand runs a real editing operation, so
+ * the component's model is cleared along with the DOM.
+ */
+async function setPrimeInputNumberValue(input, value) {
+  if (!input) return false;
+
+  const fieldId = input.id || input.name;
+  if (fieldId && typeof AutomationPauseController !== 'undefined' && AutomationPauseController.isFieldProtected(fieldId)) {
+    console.log('[Automation] Skipping protected field: ' + fieldId);
     return false;
   }
 
-  // Wait for the input to appear
+  const digitsOf = (text) => String(text == null ? '' : text).replace(/[^\d.]/g, '');
+  const desired = String(value == null ? '' : value).trim();
+  const desiredDigits = digitsOf(desired);
+
+  // Leave a field that already holds the right value completely alone.
+  // Clearing and retyping risks desynchronising PrimeNG's internal model from
+  // the DOM, and then Submit silently does nothing - which is how the NDP
+  // dialog ended up staying open with a field that visibly read 40.
+  if (digitsOf(input.value) === desiredDigits) {
+    console.log('setPrimeInputNumberValue: already ' + desired + ', leaving it as is');
+    return true;
+  }
+
+  input.focus();
+  input.click();
+  await wait(50);
+
+  const pressKey = (key, code) => {
+    input.dispatchEvent(new KeyboardEvent('keydown', { key, code, bubbles: true, cancelable: true }));
+    input.dispatchEvent(new KeyboardEvent('keypress', { key, code, bubbles: true, cancelable: true }));
+    input.dispatchEvent(new KeyboardEvent('keyup', { key, code, bubbles: true, cancelable: true }));
+  };
+
+  // Clear with real Backspace keys first: PrimeNG InputNumber drives its own
+  // model from keydown, so key events keep model and DOM in step. A native
+  // value setter only moves the DOM, and the component then re-renders its
+  // old value on the next keystroke - that is what appended the requested IDV
+  // onto the portal's pre-filled maximum.
+  for (let i = 0; i < 40 && String(input.value || '').length > 0; i++) {
+    input.setSelectionRange?.(String(input.value || '').length, String(input.value || '').length);
+    pressKey('Backspace', 'Backspace');
+    await wait(30);
+  }
+
+  // Fall back to an editing command if the component swallowed the keys.
+  if (String(input.value || '').length > 0) {
+    try {
+      input.select();
+      document.execCommand('delete');
+    } catch (_error) {
+      // Nothing more to try; the verification below will catch it.
+    }
+    await wait(100);
+    if (String(input.value || '').length > 0) {
+      setNativeInputValue(input, '');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await wait(100);
+    }
+  }
+
+  // Type per keystroke, again so the component builds its own value.
+  for (const char of desired) {
+    const code = /^[0-9]$/.test(char) ? 'Digit' + char : undefined;
+    pressKey(char, code);
+    if (digitsOf(input.value).length < digitsOf(desired.slice(0, desired.indexOf(char) + 1)).length) {
+      // The component ignored the key; nudge it with an input event.
+      try {
+        input.dispatchEvent(new InputEvent('input', { data: char, inputType: 'insertText', bubbles: true }));
+      } catch (_error) {
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }
+    await wait(60);
+  }
+
+  // Last resort for components that take neither.
+  if (digitsOf(input.value) !== desiredDigits) {
+    try {
+      input.select();
+      document.execCommand('insertText', false, desired);
+    } catch (_error) {
+      setNativeInputValue(input, desired);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    await wait(150);
+  }
+
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  input.blur();
+  input.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+  await wait(250);
+
+  const actual = digitsOf(input.value) || digitsOf(input.getAttribute('aria-valuenow'));
+  const matched = actual === desiredDigits;
+  console.log('setPrimeInputNumberValue: wanted ' + desired + ', field now "' + input.value + '"'
+    + (matched ? '' : ' (MISMATCH)'));
+  return matched;
+}
+
+/**
+ * Drives a PrimeNG autocomplete (Vehicle Brand / Model / Variant).
+ *
+ * Mirrors handlePrimeAutocomplete in the Playwright target: type per
+ * keystroke, wait out the search spinner, and require a real text match.
+ * Returns the selected option text.
+ */
+async function selectPrimeAutocomplete(inputSelector, value) {
+  if (!value) {
+    console.log('selectPrimeAutocomplete: no value provided');
+    return false;
+  }
+
   let input = null;
-  const inputStart = Date.now();
-  while (Date.now() - inputStart < 10000) {
+  const inputDeadline = Date.now() + 10000;
+  while (Date.now() < inputDeadline) {
     input = document.querySelector(inputSelector);
     if (input) break;
     await wait(150);
   }
   if (!input) {
-    console.log('⚠️ selectPrimeAutocomplete: Input not found:', inputSelector);
-    return false;
+    throw new Error('Autocomplete input not found: ' + inputSelector);
   }
 
-  // Focus and clear
+  const searchText = String(value).trim();
+
+  // Clear through real key events. Assigning el.value only changes the DOM:
+  // PrimeNG can restore its old model when the next search starts, which
+  // appends a retry to the previous search text.
   input.focus();
   input.click();
-  await wait(100);
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', code: 'KeyA', ctrlKey: true, bubbles: true }));
+  if (typeof input.select === 'function') input.select();
+  setNativeInputValue(input, '');
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', code: 'Backspace', bubbles: true }));
+  try {
+    input.dispatchEvent(new InputEvent('input', { inputType: 'deleteContentBackward', bubbles: true }));
+  } catch (_error) {
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Backspace', code: 'Backspace', bubbles: true }));
+  await wait(200);
 
-  // Use native setter so Angular detects the change
-  const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-  if (nativeSetter) nativeSetter.call(input, '');
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-  await wait(100);
+  // Type once, per keystroke: the search fires on each key, not on a bulk set.
+  await typeIntoInput(input, searchText, { perKeyDelay: 50, blur: false });
 
-  // Type value character by character for Angular reactivity
-  // Type first few chars to trigger the autocomplete search
-  const searchText = value.trim();
-  if (nativeSetter) nativeSetter.call(input, searchText);
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-  input.dispatchEvent(new Event('change', { bubbles: true }));
-  console.log('✅ Typed into autocomplete:', searchText);
+  // Let the search API answer and its spinner clear.
+  const spinnerDeadline = Date.now() + 10000;
+  while (Date.now() < spinnerDeadline) {
+    const spinner = document.querySelector('.p-icon-spin, .p-autocomplete-loader, .p-progress-spinner');
+    if (!spinner || !isElementVisible(spinner)) break;
+    await wait(200);
+  }
+  await wait(600);
 
-  // Wait for the autocomplete panel to appear with results
-  const panelStart = Date.now();
-  let selected = false;
-  while (Date.now() - panelStart < 12000) {
-    await wait(250);
-    const panel = document.querySelector('.p-autocomplete-panel');
-    if (panel && panel.offsetParent !== null) {
-      const items = panel.querySelectorAll('.p-autocomplete-item, li');
-      if (items.length > 0) {
-        console.log(`✅ Autocomplete panel visible with ${items.length} items`);
+  // Oriental offers manual entry when the vehicle is not in its catalogue.
+  // Its wording uses a typographic apostrophe, so match the part without one.
+  const manualPrompt = Array.from(document.querySelectorAll('.p-dialog')).find((dialog) => {
+    if (!isElementVisible(dialog)) return false;
+    const text = String(dialog.textContent || '').toLowerCase();
+    return text.includes('find your vehicle') || text.includes('enter the details manually');
+  });
+  if (manualPrompt) {
+    throw new Error('MANUAL_VEHICLE_PROMPT: Oriental has no catalogue entry for "' + searchText + '"');
+  }
 
-        // Try exact match first
-        let match = [...items].find(item =>
-          item.innerText.trim().toLowerCase() === searchText.toLowerCase()
-        );
-
-        // Try includes match
-        if (!match) {
-          match = [...items].find(item =>
-            item.innerText.trim().toLowerCase().includes(searchText.toLowerCase())
-          );
-        }
-
-        // Try reverse includes (search text contains item text)
-        if (!match) {
-          match = [...items].find(item =>
-            searchText.toLowerCase().includes(item.innerText.trim().toLowerCase())
-          );
-        }
-
-        // Fallback: pick the first item
-        if (!match && items.length > 0) {
-          match = items[0];
-          console.log('⚠️ No text match, selecting first item:', match.innerText.trim());
-        }
-
-        if (match) {
-          match.click();
-          console.log('✅ Selected autocomplete item:', match.innerText.trim());
-          selected = true;
-          break;
-        }
+  // Poll for the suggestions: PrimeNG renders the panel before its async
+  // options arrive, and the option rows are not always given the
+  // .p-autocomplete-item class - plain <li>s inside the panel are common.
+  const collectItems = () => {
+    const panels = Array.from(document.querySelectorAll('.p-autocomplete-panel, .p-dropdown-panel'))
+      .filter((panel) => isElementVisible(panel));
+    const found = [];
+    for (const panel of panels) {
+      for (const item of panel.querySelectorAll('.p-autocomplete-item, .p-dropdown-item, li[role="option"], li')) {
+        // Skip wrappers that merely contain other option rows.
+        if (item.querySelector('li')) continue;
+        if (!isElementVisible(item)) continue;
+        if (!String(item.textContent || '').trim()) continue;
+        found.push(item);
       }
+    }
+    if (found.length > 0) return found;
+    // Panel markup varies by portal build; fall back to a document-wide look.
+    return Array.from(document.querySelectorAll('.p-autocomplete-item, .p-dropdown-item'))
+      .filter((item) => isElementVisible(item));
+  };
+
+  let items = [];
+  const itemsDeadline = Date.now() + 12000;
+  while (Date.now() < itemsDeadline) {
+    items = collectItems();
+    if (items.length > 0) break;
+    await wait(250);
+  }
+
+  if (items.length === 0) {
+    throw new Error('Vehicle model "' + searchText + '" not found: no autocomplete options returned');
+  }
+
+  const itemText = (item) => String(item.textContent || '').trim();
+  const normalize = (text) => text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const lowerValue = searchText.toLowerCase();
+  const normalizedValue = normalize(searchText);
+
+  // Exact match, then one that ignores punctuation and spacing differences.
+  let match = items.find((item) => itemText(item).toLowerCase() === lowerValue)
+    || items.find((item) => normalize(itemText(item)) === normalizedValue);
+
+  // No first-item fallback: picking the nearest option silently books a
+  // different variant than the one that was quoted.
+  if (!match) {
+    throw new Error('Model not found (100% match required): "' + searchText
+      + '". Portal offered: ' + items.map(itemText).join(' | '));
+  }
+
+  const selectedText = itemText(match);
+  // The row can carry the click handler on an inner element, so send a full
+  // mouse sequence rather than relying on a bare .click().
+  match.scrollIntoView({ block: 'center' });
+  for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+    match.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+  }
+  match.click();
+
+  // Confirm the panel closed and the input kept a value.
+  const closeDeadline = Date.now() + 3000;
+  while (Date.now() < closeDeadline) {
+    if (collectItems().length === 0) break;
+    await wait(150);
+  }
+  await wait(300);
+
+  if (!String(input.value || '').trim()) {
+    throw new Error('Vehicle model "' + searchText + '" selection failed: the input is empty after clicking the option');
+  }
+  console.log('Selected autocomplete item:', selectedText);
+  return selectedText;
+}
+
+/**
+ * Fills a DD-MM-YYYY date field.
+ *
+ * Two things this must not do, both of which it used to:
+ *  - assign input.value directly. React overrides the value setter and
+ *    updates its change tracker, so the component never sees an edit and
+ *    reverts on the next render. Go through the native setter instead.
+ *  - silently fall back to today's date when the input cannot be parsed.
+ *    On "Date of Purchase" that books the wrong policy start date without
+ *    anybody noticing.
+ */
+function normalizeOrientalDate(value) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text) return null;
+
+  const isValid = (dd, mm, yyyy) => {
+    const d = new Date(yyyy, mm - 1, dd);
+    return d.getFullYear() === yyyy && d.getMonth() === mm - 1 && d.getDate() === dd;
+  };
+
+  // DD-MM-YYYY / DD/MM/YYYY
+  let match = text.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (match) {
+    const [dd, mm, yyyy] = [Number(match[1]), Number(match[2]), Number(match[3])];
+    if (isValid(dd, mm, yyyy)) {
+      return String(dd).padStart(2, '0') + '-' + String(mm).padStart(2, '0') + '-' + yyyy;
+    }
+    return null;
+  }
+
+  // YYYY-MM-DD (ISO), which the frontend sends for some fields.
+  match = text.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (match) {
+    const [yyyy, mm, dd] = [Number(match[1]), Number(match[2]), Number(match[3])];
+    if (isValid(dd, mm, yyyy)) {
+      return String(dd).padStart(2, '0') + '-' + String(mm).padStart(2, '0') + '-' + yyyy;
     }
   }
 
-  if (!selected) {
-    console.log('⚠️ selectPrimeAutocomplete: Timed out waiting for panel/match');
-  }
-
-  await wait(250);
-  return selected;
+  return null;
 }
 
 async function fillMuiDate(selector, dateValue) {
-
-  function formatDate(d) {
-    const day = String(d.getDate()).padStart(2, "0");
-    const month = String(d.getMonth() + 1).padStart(2, "0");
-    const year = d.getFullYear();
-    return `${day}-${month}-${year}`;
-  }
-
-  function validateDate(str) {
-    const parts = str.split("-");
-    if (parts.length !== 3) return false;
-
-    const [dd, mm, yyyy] = parts.map(Number);
-    const d = new Date(yyyy, mm - 1, dd);
-
-    return (
-      d.getFullYear() === yyyy &&
-      d.getMonth() === mm - 1 &&
-      d.getDate() === dd
-    );
-  }
-
-  if (!validateDate(dateValue)) {
-    dateValue = formatDate(new Date());
+  const normalized = normalizeOrientalDate(dateValue);
+  if (!normalized) {
+    throw new Error('Invalid date "' + dateValue + '" for ' + selector + ' (expected DD-MM-YYYY)');
   }
 
   const input = document.querySelector(selector);
-  if (!input) return;
-  // Skip if admin edited this date field during a pause
+  if (!input) throw new Error('Date input not found: ' + selector);
+
   const dateFieldId = input.id || input.name || selector;
   if (dateFieldId && typeof AutomationPauseController !== 'undefined' && AutomationPauseController.isFieldProtected(dateFieldId)) {
-    console.log(`[Automation] 🛡️ Skipping protected date field: ${dateFieldId}`);
-    return;
+    console.log('[Automation] Skipping protected date field: ' + dateFieldId);
+    return false;
   }
 
   input.focus();
-  input.value = dateValue;
-  input.dispatchEvent(new Event("input", { bubbles: true }));
-  input.dispatchEvent(new Event("change", { bubbles: true }));
+  input.click();
+  setNativeInputValue(input, normalized);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  input.dispatchEvent(new Event('blur', { bubbles: true }));
+  await wait(200);
+
+  if (String(input.value || '').trim() !== normalized) {
+    console.log('fillMuiDate: field reads "' + input.value + '" after writing ' + normalized);
+  }
+  return true;
 }
 
 async function selectYearOfManufacture(year, purchaseDate) {
@@ -987,83 +1176,141 @@ async function selectYearOfManufacture(year, purchaseDate) {
     year = new Date().getFullYear();
   }
 
-  let matched = false;
+  const radio = document.querySelector('input[name="yearOfManufacture"][value="' + year + '"]');
+  if (!radio) {
+    throw new Error('Year of manufacture "' + year + '" not available (out of range or not found)');
+  }
 
-  const radio = document.querySelector('input[name="yearOfManufacture"][value="'+year+'"]');
-  if(radio) {
+  // The radio input sits behind the PrimeNG radio box, so click the wrapping
+  // label and verify Angular actually registered the selection.
+  const label = radio.closest('label');
+  clickElement(label || radio);
+  await wait(200);
+  if (!radio.checked) {
     clickElement(radio);
-  }else{
-    throw new Error("Year of manufacture not found");
+    await wait(200);
   }
+  return radio.checked;
 }
 
-function selectHypothecationByText(text) {
+/**
+ * Selects a Finance Type radio ("Hypothecation" / "Lease" / "Hire" / "None").
+ * The slide always needs one picked - including "None" for an unfinanced
+ * vehicle - or Continue stays disabled.
+ */
+function selectFinanceType(text) {
+  const type = String(text || 'None').trim();
+
+  const radio = document.querySelector('input[id="' + type + '"]')
+    || document.querySelector('input[name="hypothecationType"][value="' + type + '"]')
+    || document.querySelector('input[value="' + type + '"]');
+  if (radio) {
+    // Click the wrapping label when there is one: the radio itself sits behind
+    // the PrimeNG radio box and does not always take a direct click.
+    const label = radio.closest('label');
+    clickElement(label || radio);
+    if (!radio.checked) clickElement(radio);
+    return radio.checked || Boolean(label);
+  }
+
   const labels = document.querySelectorAll('.hypothecation-radios label');
-
-  labels.forEach(label => {
-    const labelText = label.querySelector('.car')?.innerText.trim();
-
-    if (labelText && labelText.toLowerCase() === text.toLowerCase()) {
-      label.click();
-    }
-  });
-}
-
-async function selectAddon(addonName) {
-  // Wait for addon cards to render
-  const start = Date.now();
-  let target = null;
-  const searchName = addonName.toLowerCase().trim();
-  
-  while (Date.now() - start < 15000) {
-    const addons = document.querySelectorAll('.choose-plan');
-    // Use loose matching (includes) instead of exact match
-    target = [...addons].find(el =>
-      el.querySelector('h4')?.textContent.trim().toLowerCase().includes(searchName)
-    );
-    if (target) break;
-    await wait(250);
-  }
-  if (!target) {
-    console.log('⚠️ Addon not found:', addonName);
-    return false;
-  }
-
-  // Scroll the addon into view
-  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  await wait(250);
-
-  // Check if addon is already added (button says "Remove" or card has "active" class)
-  const addBtn = target.querySelector('.handle-addons-btn');
-  if (!addBtn) {
-    console.log('⚠️ Add button not found for:', addonName);
-    return false;
-  }
-
-  const btnText = addBtn.textContent.trim().toLowerCase();
-  if (btnText === 'remove' || target.classList.contains('active')) {
-    console.log('✅ Addon already added:', addonName, '— skipping click');
-    // Addon already selected, return true so NDP input can be filled via Edit
-    return false; // no dialog to fill, it's already set
-  }
-
-  addBtn.click();
-  console.log('✅ Clicked Add for:', addonName);
-
-  // Wait for the dialog to open (PrimeNG dialog is appended to body)
-  const dialogStart = Date.now();
-  while (Date.now() - dialogStart < 10000) {
-    const dialog = document.querySelector('.p-dialog');
-    if (dialog && dialog.offsetParent !== null) {
-      console.log('✅ Dialog opened for:', addonName);
-      await wait(250);
+  for (const label of labels) {
+    const labelText = (label.querySelector('.car')?.innerText || label.innerText || '').trim();
+    if (labelText.toLowerCase() === type.toLowerCase()) {
+      clickElement(label);
       return true;
     }
-    await wait(150);
   }
-  console.log('⚠️ Dialog did not open for:', addonName);
+
+  console.log('Finance type not found:', type);
   return false;
 }
+
+// Kept so older call sites keep working.
+function selectHypothecationByText(text) {
+  return selectFinanceType(text);
+}
+
+function findAddonCard(addonName) {
+  const searchName = String(addonName || '').toLowerCase().trim();
+  const cards = document.querySelectorAll('.choose-plan, .addon-item, .choose-offline-items');
+  return [...cards].find((card) =>
+    String(card.textContent || '').trim().toLowerCase().includes(searchName)) || null;
+}
+
+function isAddonApplied(card) {
+  if (!card) return false;
+  if (card.classList.contains('active') || card.classList.contains('selected')) return true;
+  const btnText = String(card.querySelector('.handle-addons-btn')?.textContent || '').trim().toLowerCase();
+  // The portal flips the button off "Add" once the cover is on the quote.
+  return btnText !== '' && btnText !== 'add';
+}
+
+/**
+ * Opens an add-on card's dialog.
+ *
+ * Returns { card, dialog, alreadyApplied }. The dialog element itself is
+ * returned, not a boolean: `document.querySelector('.p-dialog')` picks the
+ * FIRST dialog in the document, which is not necessarily the one that just
+ * opened, and waiting on the wrong node makes a dialog that did close look
+ * like one that never did.
+ */
+async function selectAddon(addonName) {
+  let card = null;
+  const cardDeadline = Date.now() + 15000;
+  while (Date.now() < cardDeadline) {
+    card = findAddonCard(addonName);
+    if (card) break;
+    await wait(250);
+  }
+  if (!card) {
+    console.log('Addon card not found:', addonName);
+    return null;
+  }
+
+  card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  await wait(250);
+
+  if (isAddonApplied(card)) {
+    console.log('Addon already applied:', addonName);
+    return { card, dialog: null, alreadyApplied: true };
+  }
+
+  const addBtn = card.querySelector('.handle-addons-btn');
+  if (!addBtn) {
+    console.log('Add button not found for:', addonName);
+    return { card, dialog: null, alreadyApplied: false };
+  }
+
+  // Note which dialogs are already on screen so we can tell the new one apart.
+  const preExisting = new Set(
+    Array.from(document.querySelectorAll('.p-dialog')).filter((d) => isElementVisible(d))
+  );
+  const newDialog = () => Array.from(document.querySelectorAll('.p-dialog'))
+    .find((d) => isElementVisible(d) && !preExisting.has(d)) || null;
+
+  // Some add-ons apply straight away with no dialog at all, so accept either.
+  await clickUntil(addBtn, async () => Boolean(newDialog()) || isAddonApplied(findAddonCard(addonName) || card), {
+    attempts: 4,
+    settleMs: 2500,
+    label: 'Add (' + addonName + ')',
+  });
+
+  const opened = newDialog();
+  if (opened) {
+    console.log('Dialog opened for:', addonName);
+    await wait(250);
+    return { card, dialog: opened, alreadyApplied: false };
+  }
+  if (isAddonApplied(findAddonCard(addonName) || card)) {
+    console.log('Addon applied without a dialog:', addonName);
+    return { card, dialog: null, alreadyApplied: true };
+  }
+
+  console.log('Dialog did not open for:', addonName);
+  return { card, dialog: null, alreadyApplied: false };
+}
+
 function isOtpInvalid() {
   const errorEl = document.querySelector('.signupOTPForm .error-msg');
 
@@ -1135,57 +1382,119 @@ function isOtpDialogStillVisible() {
   return Array.from(otpInputs).some(inp => inp.offsetParent !== null);
 }
 
-// fetch otp from api - retry 8 attempts, 15 sec apart
-// During waits, also checks if user manually filled OTP (dialog disappeared)
-// After all retries fail, keeps watching for manual fill indefinitely
-async function fetchOTPWithRetry(initialAttempt = 0, labelOverride = null) {
-  const INTERVAL_MS = 15000;
-  const POLL_MS = 1000;
-  const MAX_ATTEMPTS = 8;
-  let attempt = initialAttempt;
+// Timings mirror handleOtpDialog in the Playwright target so both paths wait
+// the same amount for the same mailbox.
+const ORIENTAL_OTP_CONFIG = {
+  SERVICE_LABEL: 'ORIENTAL_INSURANCE',
+  DECLARATION_SERVICE_LABEL: 'ORIENTAL_INSURANCE_DECLERATION',
+  MAILBOX: 'otpcoverscrafter@gmail.com',
+  RETRY_INTERVAL_MS: 10000,
+  MAX_FETCH_ATTEMPTS: 5,
+  // Declaration and Form 60 OTPs take noticeably longer to arrive.
+  MAX_FETCH_ATTEMPTS_LONG: 15,
+  MAX_VERIFY_ATTEMPTS: 2,
+  MANUAL_POLL_MS: 500,
+};
 
-  for (let i = 0; i < MAX_ATTEMPTS; i++) {
-    try {
-      console.log(`🔄 OTP attempt ${i + 1}/${MAX_ATTEMPTS}...`);
-      const otp = await fetchOTP(attempt, labelOverride);
-      if (otp) {
-        if (isOtpRemembered(otp)) {
-          console.log('ℹ️ Skipping previously used/rejected OTP:', otp?.id || otp?.otp);
-        } else {
-          return otp;
-        }
-      }
-    } catch (e) {
-      console.log(`⚠️ OTP attempt ${i + 1} failed:`, e?.message);
-    }
-    if (i < MAX_ATTEMPTS - 1) {
-      console.log(`⏳ Waiting ${INTERVAL_MS / 1000}s before next attempt...`);
-      // Poll during wait: break early if OTP dialog disappears (manual fill)
-      const waitStart = Date.now();
-      while (Date.now() - waitStart < INTERVAL_MS) {
-        await wait(POLL_MS);
-        if (!isOtpDialogStillVisible()) {
-          console.log('✅ OTP dialog disappeared during wait — user likely filled OTP manually');
-          return { otp: '__MANUAL__', id: null, manualFill: true };
-        }
-      }
-    }
-    attempt += 1;
+function otpFetchAttemptsFor(contextLabel) {
+  const label = String(contextLabel || '').toLowerCase();
+  return (label.includes('declaration') || label.includes('form 60'))
+    ? ORIENTAL_OTP_CONFIG.MAX_FETCH_ATTEMPTS_LONG
+    : ORIENTAL_OTP_CONFIG.MAX_FETCH_ATTEMPTS;
+}
+
+/**
+ * Reads the latest OTP id BEFORE the portal is asked to send a new one.
+ * Without this baseline the next fetch happily returns the previous OTP,
+ * which the portal then rejects as invalid.
+ */
+async function captureLatestOtpId(labelOverride = null) {
+  try {
+    const latest = await fetchOTP(0, labelOverride);
+    const id = latest?.id || latest?._id || null;
+    console.log('OTP baseline id:', id);
+    return id ? String(id) : null;
+  } catch (_error) {
+    // No baseline is fine; the first OTP that arrives is then accepted.
+    return null;
   }
+}
 
-  // All API retries exhausted — now wait indefinitely for manual OTP fill
-  console.log('⏸️ API retries exhausted. Waiting for manual OTP fill...');
+/**
+ * Blocks until the operator fills the OTP themselves.
+ *
+ * Nothing here closes or clears the dialog: once automation has run out of
+ * OTPs to try, the dialog is the operator's to finish.
+ */
+async function waitForManualOtpCompletion(contextLabel = 'OTP') {
+  console.log('Waiting for manual ' + contextLabel + ' entry; the dialog is left open');
+  if (typeof AutomationPauseController !== 'undefined') {
+    await AutomationPauseController.checkpoint('Waiting for manual ' + contextLabel + ' entry');
+  }
+  let nextLog = Date.now() + 30000;
   while (true) {
-    await wait(POLL_MS);
+    await wait(ORIENTAL_OTP_CONFIG.MANUAL_POLL_MS);
     if (!isOtpDialogStillVisible()) {
-      console.log('✅ OTP dialog disappeared — user filled OTP manually after retries ended');
+      console.log(contextLabel + ' dialog closed - filled manually');
       return { otp: '__MANUAL__', id: null, manualFill: true };
+    }
+    if (Date.now() >= nextLog) {
+      console.log('Still waiting for manual ' + contextLabel + ' entry...');
+      nextLog = Date.now() + 30000;
     }
   }
 }
 
+/**
+ * Polls the OTP service on the automation's schedule, skipping any OTP that
+ * is not newer than the baseline, and watching for a manual fill throughout.
+ * It never gives up with an error: if no OTP arrives it hands the dialog to
+ * the operator.
+ */
+async function fetchOTPWithRetry(options = {}) {
+  const {
+    labelOverride = null,
+    contextLabel = 'OTP',
+    previousOtpId = null,
+    maxAttempts = otpFetchAttemptsFor(contextLabel),
+  } = options;
 
-async function fillOTP(otpData, attempt = 0, labelOverride = null) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    console.log('Attempt ' + attempt + '/' + maxAttempts + ' to retrieve the ' + contextLabel + ' OTP');
+    try {
+      const candidate = await fetchOTP(attempt, labelOverride);
+      const candidateId = candidate?.id ? String(candidate.id) : null;
+
+      if (previousOtpId && candidateId && candidateId === previousOtpId) {
+        console.log('Skipping the OTP that was already there before this request');
+      } else if (isOtpRemembered(candidate)) {
+        console.log('Skipping a previously used or rejected OTP:', candidateId || candidate?.otp);
+      } else if (candidate?.otp) {
+        console.log('OTP retrieved:', candidate.otp);
+        return candidate;
+      }
+    } catch (e) {
+      console.log('Attempt ' + attempt + ' failed:', e?.message);
+    }
+
+    if (attempt < maxAttempts) {
+      // Poll through the wait so a manual fill is noticed immediately.
+      const waitUntil = Date.now() + ORIENTAL_OTP_CONFIG.RETRY_INTERVAL_MS;
+      while (Date.now() < waitUntil) {
+        await wait(ORIENTAL_OTP_CONFIG.MANUAL_POLL_MS);
+        if (!isOtpDialogStillVisible()) {
+          console.log(contextLabel + ' dialog closed while waiting - filled manually');
+          return { otp: '__MANUAL__', id: null, manualFill: true };
+        }
+      }
+    }
+  }
+
+  console.log('No fresh ' + contextLabel + ' OTP after ' + maxAttempts + ' attempts; handing over to manual entry');
+  return waitForManualOtpCompletion(contextLabel);
+}
+
+async function fillOTP(otpData, attempt = 0, labelOverride = null, contextLabel = 'OTP') {
   ensureOrientalPageAlertInterceptor();
   const otp = otpData.otp;
 
@@ -1281,18 +1590,32 @@ async function fillOTP(otpData, attempt = 0, labelOverride = null) {
       await wait(500);
       const otpFailure = await waitForOtpFailureSignal(5000, alertBaseline);
       if (otpFailure) {
-        console.log('⚠️ OTP rejected by Oriental:', otpFailure.message);
+        console.log('OTP rejected by Oriental:', otpFailure.message);
         rememberOtpInMemory(otpData, 'rejected');
         await setOtpSinceTimestampNow();
+
         const nextAttempt = attempt + 1;
-        const newOtpData = await fetchOTPWithRetry(nextAttempt, labelOverride);
-        if(newOtpData) {
-         const result = await fillOTP(newOtpData, nextAttempt, labelOverride);
-         if(result) {
-          return result;
-         }
+        if (nextAttempt >= ORIENTAL_OTP_CONFIG.MAX_VERIFY_ATTEMPTS) {
+          // The automation stops retrying here too. Leave the dialog alone so
+          // the operator can finish it by hand.
+          console.log('OTP rejected ' + nextAttempt + ' times; handing the dialog over for manual entry');
+          await waitForManualOtpCompletion(contextLabel);
+          return { success: true, manualFill: true };
         }
-        return { success: false, error: 'Fresh OTP not received after rejection' };
+
+        // Only accept an OTP newer than the one that was just rejected.
+        const rejectedId = otpData?.id ? String(otpData.id) : null;
+        const newOtpData = await fetchOTPWithRetry({
+          labelOverride,
+          contextLabel,
+          previousOtpId: rejectedId,
+        });
+        if (newOtpData?.manualFill) return { success: true, manualFill: true };
+        if (newOtpData) {
+          return fillOTP(newOtpData, nextAttempt, labelOverride, contextLabel);
+        }
+        await waitForManualOtpCompletion(contextLabel);
+        return { success: true, manualFill: true };
       }else{
         // mark otp as used and clear "since" timestamp so next OTP flow uses a fresh one
         const otpId = otpData?.id || otpData?._id;
@@ -1314,20 +1637,312 @@ async function fillOTP(otpData, attempt = 0, labelOverride = null) {
       }
     }
   } else {
-    console.log("⚠️ OTP fill incomplete");
+    console.log('Could not fill the OTP inputs automatically');
   }
 
-  return { success: false, error: 'OTP fill incomplete' };
+  // Never leave the dialog half-filled and abandoned: if the OTP could not be
+  // entered or submitted, the operator finishes it.
+  if (isOtpDialogStillVisible()) {
+    await waitForManualOtpCompletion(contextLabel);
+    return { success: true, manualFill: true };
+  }
+  return { success: true };
 }
 
+
+// ===============================================================
+//  PORTAL STATE HELPERS
+//  Ported from the Playwright Oriental target so the extension reads
+//  the same slide / dialog state the server-side automation does.
+// ===============================================================
+
+function isElementVisible(el) {
+  if (!el) return false;
+  const style = window.getComputedStyle(el);
+  if (style.display === 'none' || style.visibility === 'hidden') return false;
+  const rect = el.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+}
+
+/**
+ * Clicks and checks that it took effect, re-clicking if it did not.
+ *
+ * The portal drops clicks: an operator often has to press Add three or four
+ * times before the dialog opens. Everywhere the Playwright target clicks
+ * something it matters about, it verifies and re-clicks the same way.
+ */
+async function clickUntil(element, isDone, options = {}) {
+  if (!element) return false;
+  const { attempts = 4, settleMs = 2500, pollMs = 150, label = 'element' } = options;
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    if (await isDone()) return true;
+
+    element.scrollIntoView({ block: 'center' });
+    await wait(100);
+    // Some handlers sit on pointer events rather than click.
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+      element.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+    }
+    if (typeof element.click === 'function') element.click();
+
+    const deadline = Date.now() + settleMs;
+    while (Date.now() < deadline) {
+      await wait(pollMs);
+      if (await isDone()) {
+        if (attempt > 1) console.log('Clicked ' + label + ' (took ' + attempt + ' attempts)');
+        return true;
+      }
+    }
+    console.log('Click on ' + label + ' did not register (attempt ' + attempt + '/' + attempts + '), re-clicking');
+  }
+
+  return await isDone();
+}
+
+function getSlickActiveSlide() {
+  return document.querySelector('.slick-slide.slick-active[aria-hidden="false"]')
+    || document.querySelector('.slick-slide.slick-active');
+}
+
+/** Current slick index, or -1 when the page is not a slider. */
+function getSlickActiveIndex() {
+  const active = getSlickActiveSlide();
+  if (!active) return -1;
+  // The current portal uses data-index; older builds used data-slick-index.
+  const idx = active.getAttribute('data-index') ?? active.getAttribute('data-slick-index');
+  return idx !== null ? Number.parseInt(idx, 10) : -1;
+}
+
+/**
+ * Index + content snippet of the active slide. More reliable than the index
+ * alone: the portal sometimes keeps the index and swaps the content.
+ */
+function getSlickActiveSignature() {
+  const active = getSlickActiveSlide();
+  if (!active) return 'none';
+  const idx = active.getAttribute('data-index') ?? active.getAttribute('data-slick-index') ?? '?';
+  const text = (active.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  return idx + ':' + text;
+}
+
+/**
+ * The portal reports step outcomes in a `.successfully-popup.p-dialog`.
+ * Reading it is what stops the run on a portal error instead of marching on
+ * into steps whose fields never render.
+ */
+function getVisibleOutcomeDialog() {
+  const dialogs = Array.from(document.querySelectorAll('.successfully-popup.p-dialog:not(.makerchecker-popup)'));
+  const dialog = dialogs.find((el) => isElementVisible(el));
+  if (!dialog) return null;
+
+  const heading = dialog.querySelector('.response-text')?.textContent?.trim() || '';
+  const message = dialog.querySelector('.success-content p')?.textContent?.replace(/\s+/g, ' ').trim()
+    || dialog.textContent?.replace(/\s+/g, ' ').trim()
+    || heading;
+
+  if (dialog.querySelector('.icon-error') || /^error!?$/i.test(heading)) {
+    return { kind: 'error', message, dialog };
+  }
+  if (dialog.querySelector('.icon-success') || /^success!?$/i.test(heading)) {
+    return { kind: 'success', message, dialog };
+  }
+  return null;
+}
+
+/**
+ * Maker-checker popup - raised when the IDV slab was modified, so the proposal
+ * goes to a checker instead of straight to payment. It is a `.p-dialog` too,
+ * so anything looking for the sync popup has to exclude it.
+ */
+function getVisibleMakerCheckerDialog() {
+  const dialogs = Array.from(document.querySelectorAll('.makerchecker-popup.p-dialog, .p-dialog'));
+  return dialogs.find((dialog) => {
+    if (!isElementVisible(dialog)) return false;
+    if (dialog.classList.contains('makerchecker-popup')) return true;
+    return String(dialog.textContent || '').toLowerCase().includes('checker for approval');
+  }) || null;
+}
+
+async function waitForMakerCheckerDialog(timeoutMs = 3000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const dialog = getVisibleMakerCheckerDialog();
+    if (dialog) return dialog;
+    await wait(200);
+  }
+  return null;
+}
+
+/** Sends the proposal to the checker queue and dismisses the confirmation. */
+async function handleMakerCheckerDialog(dialog, logger = console.log) {
+  const sendBtn = Array.from(dialog.querySelectorAll('.footer-red, button, .pointer'))
+    .find((el) => String(el.textContent || '').trim().toLowerCase().includes('send for approval'));
+  if (!sendBtn) {
+    logger('WARN Send For Approval button not found in maker-checker dialog');
+    return false;
+  }
+  clickElement(sendBtn);
+  logger('Clicked Send For Approval; waiting for portal confirmation');
+
+  const start = Date.now();
+  while (Date.now() - start < 15000) {
+    const confirmation = Array.from(document.querySelectorAll('.makerchecker-popup.p-dialog'))
+      .find((el) => isElementVisible(el)
+        && String(el.textContent || '').toLowerCase().includes('proposal sent for approval successfully'));
+    if (confirmation) {
+      logger('Proposal Sent For Approval Successfully');
+      const continueBtn = Array.from(confirmation.querySelectorAll('.footer-green, button, .pointer'))
+        .find((el) => String(el.textContent || '').trim().toLowerCase().includes('continue'));
+      if (continueBtn) clickElement(continueBtn);
+      return true;
+    }
+    await wait(250);
+  }
+  logger('WARN Maker-checker confirmation did not appear within 15s');
+  return false;
+}
+
+/**
+ * Finds the "Continue in English" button in the language chooser.
+ *
+ * The dialog is BEM-classed: `section.language-welcome__dialog` holding
+ * `.language-welcome__choices > button`. A `.language-welcome button`
+ * selector does NOT match `language-welcome__dialog` - CSS matches whole
+ * class tokens - so scope off the real class names, widest match last.
+ * Both choice buttons carry a `.language-welcome__english-name` label
+ * ("Continue in English" / "Continue in Hindi"), which is what tells the
+ * two apart regardless of page language.
+ */
+function findLanguageWelcomeEnglishButton() {
+  const scopes = [
+    ...document.querySelectorAll('.language-welcome__choices'),
+    ...document.querySelectorAll('.language-welcome__dialog'),
+    ...document.querySelectorAll('.language-welcome'),
+    ...document.querySelectorAll('[class*="language-welcome"]'),
+  ];
+
+  for (const scope of scopes) {
+    for (const button of scope.querySelectorAll('button')) {
+      const englishLabel = button.querySelector('.language-welcome__english-name');
+      const text = String((englishLabel || button).textContent || '').trim().toLowerCase();
+      if (text.includes('continue in english')) return button;
+    }
+  }
+  return null;
+}
+
+function isLanguageWelcomeVisible() {
+  const dialog = document.querySelector('.language-welcome__dialog, .language-welcome')
+    || document.querySelector('[class*="language-welcome"]');
+  return Boolean(dialog && isElementVisible(dialog));
+}
+
+/**
+ * The portal can open a language chooser over the whole page. Nothing is
+ * clickable until it is dismissed, so this runs on load as well as before
+ * login - the dialog is up long before any automation is started.
+ */
+async function dismissLanguageWelcome(timeoutMs = 5000) {
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    const button = findLanguageWelcomeEnglishButton();
+    if (button && isElementVisible(button)) {
+      // A bare .click() is not always enough: the choice is a React handler
+      // that can be wired to pointer events, so send the full sequence.
+      button.scrollIntoView({ block: 'center' });
+      for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+        button.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+      }
+      button.click();
+      console.log('[Oriental] Selected English language');
+
+      // Confirm it actually closed before reporting success.
+      const closeDeadline = Date.now() + 3000;
+      while (Date.now() < closeDeadline) {
+        if (!isLanguageWelcomeVisible()) return true;
+        await wait(150);
+      }
+      console.log('[Oriental] Language chooser still visible after clicking English; retrying');
+    }
+    await wait(250);
+  }
+
+  // The chooser is optional once the portal has stored the preference.
+  return !isLanguageWelcomeVisible();
+}
+
+/**
+ * Keeps dismissing the chooser for as long as the page can re-render it.
+ * The portal is a SPA and shows it on first paint, well before the operator
+ * triggers a run.
+ */
+function startLanguageWelcomeWatcher() {
+  if (window.__orientalLanguageWatcher) return;
+  window.__orientalLanguageWatcher = true;
+
+  let dismissing = false;
+  let lastCheck = 0;
+  let observer = null;
+
+  const tryDismiss = () => {
+    // The portal mutates the DOM constantly; throttle so the watcher costs
+    // nothing between renders.
+    const now = Date.now();
+    if (dismissing || now - lastCheck < 300) return;
+    lastCheck = now;
+    if (!isLanguageWelcomeVisible()) return;
+
+    dismissing = true;
+    dismissLanguageWelcome(4000)
+      .then((dismissed) => {
+        // The choice is remembered for the session, so stop watching once
+        // the chooser is gone.
+        if (dismissed && observer) observer.disconnect();
+      })
+      .finally(() => { dismissing = false; });
+  };
+
+  tryDismiss();
+  observer = new MutationObserver(tryDismiss);
+  observer.observe(document.documentElement, { childList: true, subtree: true });
+}
+
+// Plan table mirrors ORIENTAL_CONFIG.PLANS in the Playwright target.
+const ORIENTAL_PLANS = [
+  { id: '0', value: 'Bundle', label: 'Long Term Bundled Policy' },
+  { id: '1', value: 'OD', label: 'Standalone Own Damage Policy' },
+  { id: '2', value: 'TP', label: 'Long Term Liability only policy' },
+];
+
+/** Maps whatever the frontend sent (id, value or label) to a plan value. */
+function normalizeOrientalPlan(planInput) {
+  if (planInput === undefined || planInput === null) return null;
+  const planStr = String(planInput).trim().toLowerCase();
+  if (!planStr) return null;
+
+  const direct = ORIENTAL_PLANS.find((plan) =>
+    plan.label.toLowerCase() === planStr || plan.value.toLowerCase() === planStr || plan.id === planStr);
+  if (direct) return direct.value;
+
+  const fuzzy = ORIENTAL_PLANS.find((plan) => plan.label.toLowerCase().includes(planStr));
+  if (fuzzy) return fuzzy.value;
+
+  const reverse = ORIENTAL_PLANS.find((plan) =>
+    planStr.includes(plan.label.toLowerCase()) || planStr.includes(plan.value.toLowerCase()));
+  if (reverse) return reverse.value;
+
+  return null;
+}
 
 
 const ORIENTAL_SELECTORS = {
   rtoInput: '#cityOfRegistration input, input[name="cityOfRegistration"]',
-  vehicalBrandModelVariantInput: 'input[placeholder*="Brand"], .p-autocomplete-input',
+  vehicalBrandModelVariantInput: '.carmodelclass input, input[placeholder*="Brand"], .p-autocomplete-input',
   engineNumberInput: 'input[name*="engine"], #engineNumber, #engineNumber input, input[placeholder*="Engine"]',
   chassisNumberInput: 'input[name*="chassis"], #chassisNumber, #chassisNumber input, input[placeholder*="Chassis"]',
-  brandNewVehicleRadio: 'input[value="BRAND_NEW"]',
+  brandNewVehicleRadio: '#policy-BRAND_NEW, input[value="BRAND_NEW"], input[value="brandNew"]',
   getQuoteButton: '.get-quote-btn, button',
   loginButton: '#login-btn, .login-btn',
   loginModal: '.login-popup-box, .popup-form',
@@ -1345,14 +1960,25 @@ const ORIENTAL_SELECTORS = {
   paymentMethodRadio: 'input[name*="previousPolicyType"]',
   branchCodeInput: 'input[name="branchOffice"]',
   permanentAddressInput: 'input[name="permanentAddress"]',
+  planCards: '.choose-plan',
+  idvSlider: 'input[name="idv-range-slider"]',
+  idvInput: '.idv-input.p-inputnumber input.p-inputnumber-input',
+  previousPolicyNcbClaimFlagNo: 'input[name="previousPolicyNcbClaimFlag"][value="false"]',
+  underwritingDiscountInput: 'input[placeholder="Underwriting Discount"]',
+  uwDiscountSubmitBtn: 'button[aria-label="uwDiscound-submit-btn"], .policy-form-footer button.policy-btn',
+  proposalNumberText: '.sub-text',
+  okayButton: '.pointer.footer-green',
+  makerCheckerDialog: '.makerchecker-popup.p-dialog',
+  samePermanentAddressCheckbox: '#samePermanentFlag, input[name="samePermanentFlag"]',
 };
 
 const ORIENTAL_URLS = {
   MAKE_PAYMENTS: 'https://orientalinsurance.org.in/make-payments',
 };
 const ORIENTAL_DEFAULT_VALUES = {
-  branchCode: "211201 : CB0 5 NEW DELHI",
-  plan: "Long Term Bundled Policy",
+  // No branchCode here on purpose: it is agent-specific and arrives in
+  // agentDetails.branchCode with the request.
+  plan: "Bundle",
   underwritingDiscount: 85,
   ndpDiscount: 40,
   nilDepreciation: false,
@@ -1369,12 +1995,19 @@ function normalizeToOrientalForm(payload) {
   const a = payload.additionalDetails || payload.additional || {};
   const vi = payload.vehicleInformation || payload.vehicleInfo || {};
   const c = payload.covers || payload.addons || {};
+  const ag = payload.agentDetails || payload.agent || {};
+  const h = payload.hypothecation || {};
+  const cust = payload.customerDetails || payload.customer || {};
   return {
+    agentDetails: typeof ag === 'object' ? ag : {},
     vehicleDetails: typeof v === 'object' ? v : {},
     vehicleInformation: typeof vi === 'object' ? vi : {},
     planDetails: typeof p === 'object' ? p : {},
     additionalDetails: typeof a === 'object' ? a : {},
     covers: typeof c === 'object' ? c : {},
+    hypothecation: typeof h === 'object' ? h : {},
+    customerDetails: typeof cust === 'object' ? cust : {},
+    proposalNumber: payload.proposalNumber,
   };
 }
 
@@ -1393,6 +2026,8 @@ const AutomationPauseController = {
       isPaused: false,
       isStopped: false,
       isRunning: false,
+      isFailed: false,
+      errorMessage: null,
       currentStep: null,
       completedSteps: [],
       phase: null,
@@ -1580,6 +2215,18 @@ const AutomationPauseController = {
       'color: #ff0000; font-weight: bold; font-size: 16px;');
   },
 
+  /** Call when a step throws, so the panel shows why the run ended. */
+  fail(message) {
+    const state = this.getState();
+    state.isRunning = false;
+    state.isFailed = true;
+    state.errorMessage = String(message || 'Unknown error');
+    this._saveState(state);
+    this._updateUI();
+    console.log('%c[Automation] FAILED: ' + state.errorMessage,
+      'color: #ff5252; font-weight: bold; font-size: 14px;');
+  },
+
   reset() {
     sessionStorage.removeItem(this.STORAGE_KEY);
     clearRememberedOtpEntries();
@@ -1603,7 +2250,24 @@ const AutomationPauseController = {
     // Always show the panel once injected
     panel.style.display = 'flex';
 
-    if (state.isStopped) {
+    const errorEl = document.getElementById('oriental-auto-error');
+    if (errorEl) {
+      errorEl.textContent = state.errorMessage || '';
+      errorEl.style.display = state.errorMessage ? 'block' : 'none';
+      errorEl.title = state.errorMessage || '';
+    }
+
+    if (state.isFailed) {
+      badge.textContent = '❌ FAILED';
+      badge.style.background = '#b71c1c';
+      pauseBtn.textContent = '⏸️ Pause';
+      pauseBtn.disabled = true;
+      pauseBtn.style.opacity = '0.4';
+      pauseBtn.style.cursor = 'not-allowed';
+      stopBtn.disabled = true;
+      stopBtn.style.opacity = '0.4';
+      stopBtn.style.cursor = 'not-allowed';
+    } else if (state.isStopped) {
       badge.textContent = '⛔ STOPPED';
       badge.style.background = '#b71c1c';
       pauseBtn.textContent = '⏸️ Pause';
@@ -1649,7 +2313,8 @@ const AutomationPauseController = {
       stopBtn.style.cursor = 'pointer';
     }
 
-    stepEl.textContent = state.currentStep || (state.isRunning ? 'Starting...' : 'Waiting for automation');
+    stepEl.textContent = state.currentStep
+      || (state.isFailed ? 'Failed' : (state.isRunning ? 'Starting...' : 'Waiting for automation'));
 
     const protCount = (state.adminEditedFields || []).length;
     protectedEl.textContent = protCount > 0
@@ -1687,6 +2352,12 @@ const AutomationPauseController = {
       ">Waiting for automation</div>
       <div id="oriental-auto-protected" style="
         font-size:10px; color:#ffd166; display:none; margin-top:2px;
+      "></div>
+      <div id="oriental-auto-error" style="
+        font-size:11px; color:#ff8a80; display:none; margin-top:2px;
+        background:#2b1416; border:1px solid #b71c1c; border-radius:6px;
+        padding:6px 8px; max-height:120px; overflow-y:auto;
+        white-space:pre-wrap; word-break:break-word; user-select:text;
       "></div>
       <div style="display:flex; gap:8px;">
         <button id="oriental-auto-pause-btn" style="

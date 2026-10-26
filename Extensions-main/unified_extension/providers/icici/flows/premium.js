@@ -5,6 +5,12 @@
 
 const ICICIPremium = {
   async run(payload, logger = console.log) {
+    const pauseAt = async (label) => window.AutomationPauseController?.checkpoint(label);
+    const pauseAwareWait = async (ms) => {
+      const waitFn = window.flowUtils?.controlledWait || window.flowUtils?.wait;
+      if (waitFn) return waitFn(ms);
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    };
     logger('🚀 Starting ICICI Lombard premium flow...');
     logger('Current URL:', window.location.href);
 
@@ -18,9 +24,11 @@ const ICICIPremium = {
       logger('✅ On premium page');
 
       // Wait for premium page to fully load
+      await pauseAt('Premium -> Load');
       await this.waitForPremiumPageLoad(logger);
 
       // Fill IDV field from payload
+      await pauseAt('Premium -> IDV');
       let filled = await this.fillIDVField(payload, logger);
       
       if (!filled) {
@@ -28,6 +36,7 @@ const ICICIPremium = {
       }
 
       // Click Update button
+      await pauseAt('Premium -> Update IDV');
       let clicked = await this.clickUpdateButton(logger);
       
       if (!clicked) {
@@ -36,9 +45,10 @@ const ICICIPremium = {
       }
 
       // Wait for page to update
-      await new Promise(r => setTimeout(r, 1500));
+      await pauseAwareWait(1500);
 
       // Click on Basic Plan card
+      await pauseAt('Premium -> Basic Plan');
       clicked = await this.clickBasicPlanCard(logger);
       
       if (!clicked) {
@@ -47,9 +57,10 @@ const ICICIPremium = {
       }
 
       // Wait for card to expand/load
-      await new Promise(r => setTimeout(r, 1000));
+      await pauseAwareWait(1000);
 
       // Click Add/Remove Cover link
+      await pauseAt('Premium -> Add Remove Cover');
       clicked = await this.clickAddRemoveCoverLink(logger);
       
       if (!clicked) {
@@ -58,31 +69,43 @@ const ICICIPremium = {
       }
 
       // Wait 2 seconds for modal/section to appear
-      await new Promise(r => setTimeout(r, 2000));
+      await pauseAwareWait(2000);
 
-      // Check PA cover checkbox
-      clicked = await this.checkPACoverCheckbox(logger);
-      
-      if (!clicked) {
-        logger('⚠️ Failed to check PA cover checkbox');
+      const shouldCheckPACover =
+        payload?.agentDetails?.withoutcpa === false ||
+        (payload?.agentDetails?.withoutcpa == null && payload?.customerDetails?.withoutcpa === false);
+
+      // Check PA cover checkbox only when the payload explicitly enables it
+      if (shouldCheckPACover) {
+        await pauseAt('Premium -> PA Cover');
+        clicked = await this.checkPACoverCheckbox(logger);
+        
+        if (!clicked) {
+          logger('⚠️ Failed to check PA cover checkbox');
+        }
+      } else {
+        logger('ℹ️ Skipping PA cover checkbox because agentDetails.withoutcpa is not false');
       }
 
       // Check if nilDepreciation is enabled
-      const nilDepreciation = payload?.covers?.nilDepreciation === '1' || payload?.covers?.nilDepreciation === true;
+      const covers = payload?.vehicleDetails?.covers || payload?.covers || {};
+      const nilDepreciation = covers?.nilDepreciation === '1' || covers?.nilDepreciation === true;
       
       if (nilDepreciation) {
         logger('✅ Nil Depreciation is enabled');
 
         // Check Zero Depreciation Cover checkbox
+        await pauseAt('Premium -> Zero Depreciation');
         clicked = await this.checkZeroDepreciationCheckbox(logger);
         
         if (!clicked) {
           logger('⚠️ Failed to check Zero Depreciation checkbox');
         } else {
           // Wait for options to appear
-          await new Promise(r => setTimeout(r, 800));
+          await pauseAwareWait(800);
 
           // Select Silver plan for Zero Depreciation
+          await pauseAt('Premium -> Zero Depreciation Plan');
           clicked = await this.selectZeroDepreciationPlan(logger);
           
           if (!clicked) {
@@ -92,12 +115,13 @@ const ICICIPremium = {
       }
 
       // Check if returnToInvoice is enabled
-      const returnToInvoice = payload?.covers?.returnToInvoice === '1' || payload?.covers?.returnToInvoice === true;
+      const returnToInvoice = covers?.returnToInvoice === '1' || covers?.returnToInvoice === true;
       
       if (returnToInvoice) {
         logger('✅ Return to Invoice is enabled');
 
         // Check Return to Invoice Cover checkbox
+        await pauseAt('Premium -> Return to Invoice');
         clicked = await this.checkReturnToInvoiceCheckbox(logger);
         
         if (!clicked) {
@@ -106,6 +130,7 @@ const ICICIPremium = {
       }
 
       // Click Recalculate button
+      await pauseAt('Premium -> Recalculate');
       clicked = await this.clickRecalculateButton(logger);
       
       if (!clicked) {
@@ -113,9 +138,10 @@ const ICICIPremium = {
       }
 
       // Wait 3-5 seconds for recalculation
-      await new Promise(r => setTimeout(r, 4000));
+      await pauseAwareWait(4000);
 
       // Click Submit button
+      await pauseAt('Premium -> Submit');
       clicked = await this.clickSubmitButton(logger);
       
       if (!clicked) {
@@ -124,7 +150,8 @@ const ICICIPremium = {
       }
 
       // Wait 5 seconds then click "Buy Now" button
-      await new Promise(r => setTimeout(r, 5000));
+      await pauseAwareWait(5000);
+      await pauseAt('Premium -> Buy Now');
       clicked = await this.clickBuyNowButton(logger);
       
       if (!clicked) {
@@ -171,7 +198,12 @@ const ICICIPremium = {
   async fillIDVField(payload, logger) {
     logger('🔍 Looking for IDV field...');
 
-    const idv = payload?.vehicleDetails?.idv || payload?.idv || '';
+    const idv =
+      payload?.vehicleDetails?.IDV ||
+      payload?.vehicleDetails?.idv ||
+      payload?.IDV ||
+      payload?.idv ||
+      '';
     
     if (!idv) {
       logger('⚠️ No IDV provided in payload');

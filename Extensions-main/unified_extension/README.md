@@ -1,6 +1,6 @@
 # CoversCrafter Unified Extension
 
-Single Chrome extension that bundles Bajaj, ICICI Lombard, Universal Sompo, and Oriental Insurance automation.
+Single Chrome extension that bundles Bajaj, ICICI Lombard, Universal Sompo, Oriental Insurance, and Go Digit automation.
 
 ## Load in Chrome
 
@@ -20,10 +20,10 @@ Single Chrome extension that bundles Bajaj, ICICI Lombard, Universal Sompo, and 
 
 ## Updating provider code
 
-After editing `Bajaj_extension`, `icici_extension`, etc., run from PowerShell:
+After editing `Bajaj_extension`, `icici_extension`, `Sompo_extension`, `orential`, or `GoDigit_extension`, run from PowerShell:
 
 ```powershell
 .\sync-providers.ps1
 ```
 
-Then re-apply the hub navigation blocks in each `providers/*/popup.html` if those files were overwritten.
+Then re-apply the hub navigation blocks in each `providers/*/popup.html` and `providers/godigit/config.html` if those files were overwritten.

@@ -7,6 +7,7 @@ $map = @{
   'icici_extension' = 'icici'
   'Sompo_extension' = 'sompo'
   'orential' = 'oriental'
+  'GoDigit_extension' = 'godigit'
 }
 
 foreach ($entry in $map.GetEnumerator()) {

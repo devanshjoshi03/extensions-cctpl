@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "Royal Sundaram Policy Print Saver",
+  "version": "1.0.0",
+  "description": "Clicks Royal Sundaram policy print and saves the generated policy PDF.",
+  "permissions": [
+    "activeTab",
+    "downloads",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://ilounge.royalsundaram.in/*"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://ilounge.royalsundaram.in/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://ilounge.royalsundaram.in/*"
+      ],
+      "js": [
+        "flows/policy-print-flow.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ]
+}

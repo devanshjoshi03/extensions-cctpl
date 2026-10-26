@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Go Digit Settings</title>
+  <link rel="stylesheet" href="config.css">
+  <link rel="stylesheet" href="../../hub-nav.css">
+</head>
+<body>
+  <main class="settings">
+    <nav class="hub-nav">
+      <a href="../../popup.html">← All insurers</a>
+      <a href="../../config.html">Settings</a>
+    </nav>
+    <h1>Go Digit Extension Settings</h1>
+    <section class="section">
+      <h2>OTP Service</h2>
+      <label for="otp-api-key">OTP Service API Key</label>
+      <input id="otp-api-key" type="password" autocomplete="off">
+      <label for="otp-email">OTP Email</label>
+      <input id="otp-email" type="email" autocomplete="email">
+      <label for="otp-label">OTP Label</label>
+      <input id="otp-label" type="text" autocomplete="off">
+      <label for="otp-api">OTP API Base URL</label>
+      <input id="otp-api" type="url" autocomplete="url">
+    </section>
+    <section class="section">
+      <h2>Default Agent Credentials</h2>
+      <p>Payload agent details take priority over these defaults.</p>
+      <label for="phone-number">Registered mobile number</label>
+      <input id="phone-number" type="tel" inputmode="numeric" maxlength="10" autocomplete="tel-national">
+      <label for="user-code">Go Digit user code</label>
+      <input id="user-code" type="text" autocomplete="off">
+      <label for="agent-password">Password / OTP mode</label>
+      <input id="agent-password" type="password" autocomplete="new-password">
+    </section>
+    <button id="save-settings" type="button">Save settings</button>
+    <div id="settings-status" role="status"></div>
+  </main>
+  <script src="../../hub-nav.js"></script>
+  <script src="config.js"></script>
+</body>
+</html>

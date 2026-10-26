@@ -5,6 +5,12 @@
 
 const ICICIProposal = {
   async run(payload, logger = console.log) {
+    const pauseAt = async (label) => window.AutomationPauseController?.checkpoint(label);
+    const pauseAwareWait = async (ms) => {
+      const waitFn = window.flowUtils?.controlledWait || window.flowUtils?.wait;
+      if (waitFn) return waitFn(ms);
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    };
     logger('🚀 Starting ICICI Lombard proposal flow...');
     logger('Current URL:', window.location.href);
 
@@ -18,9 +24,11 @@ const ICICIProposal = {
       logger('✅ On proposal page');
 
       // Wait for proposal page to fully load
+      await pauseAt('Proposal -> Load');
       await this.waitForProposalPageLoad(logger);
 
       // Fill engine number
+      await pauseAt('Proposal -> Engine Number');
       let filled = await this.fillEngineNumber(payload, logger);
       
       if (!filled) {
@@ -28,20 +36,15 @@ const ICICIProposal = {
       }
 
       // Fill chassis number
+      await pauseAt('Proposal -> Chassis Number');
       filled = await this.fillChassisNumber(payload, logger);
       
       if (!filled) {
         logger('⚠️ Failed to fill chassis number');
       }
 
-      // Fill vehicle color
-      filled = await this.fillVehicleColor(payload, logger);
-      
-      if (!filled) {
-        logger('⚠️ Failed to fill vehicle color');
-      }
-
       // Check Complete KYC radio button
+      await pauseAt('Proposal -> Complete KYC');
       let checked = await this.checkCompleteKYCRadio(logger);
       
       if (!checked) {
@@ -49,9 +52,10 @@ const ICICIProposal = {
       }
 
       // Wait 2 seconds
-      await new Promise(r => setTimeout(r, 2000));
+      await pauseAwareWait(2000);
 
       // Enter PAN number
+      await pauseAt('Proposal -> PAN');
       filled = await this.fillPANNumber(payload, logger);
       
       if (!filled) {
@@ -59,6 +63,7 @@ const ICICIProposal = {
       }
 
       // Enter DOB
+      await pauseAt('Proposal -> DOB');
       filled = await this.fillDOB(payload, logger);
       
       if (!filled) {
@@ -66,6 +71,7 @@ const ICICIProposal = {
       }
 
       // Click PAN SUBMIT button
+      await pauseAt('Proposal -> PAN Submit');
       let clicked = await this.clickPANSubmitButton(logger);
       
       if (!clicked) {
@@ -74,9 +80,10 @@ const ICICIProposal = {
       }
 
       // Wait 2 seconds
-      await new Promise(r => setTimeout(r, 2000));
+      await pauseAwareWait(2000);
 
       // Attach OVD front image
+      await pauseAt('Proposal -> OVD Front');
       const frontAttached = await this.attachOVDFrontImage(payload, logger);
       
       if (!frontAttached) {
@@ -84,6 +91,7 @@ const ICICIProposal = {
       }
 
       // Attach OVD back image
+      await pauseAt('Proposal -> OVD Back');
       const backAttached = await this.attachOVDBackImage(payload, logger);
       
       if (!backAttached) {
@@ -91,6 +99,7 @@ const ICICIProposal = {
       }
 
       // Click upload SUBMIT button
+      await pauseAt('Proposal -> Upload Submit');
       clicked = await this.clickUploadSubmitButton(logger);
       
       if (!clicked) {
@@ -98,6 +107,7 @@ const ICICIProposal = {
       }
 
       // Wait for proceed button to appear and click it
+      await pauseAt('Proposal -> Proceed');
       clicked = await this.waitAndClickProceedButton(logger);
       
       if (!clicked) {
@@ -105,6 +115,7 @@ const ICICIProposal = {
       }
 
       // Select title/gender from mat-select
+      await pauseAt('Proposal -> Title');
       let selected = await this.selectGenderTitle(payload, logger);
       
       if (!selected) {
@@ -112,6 +123,7 @@ const ICICIProposal = {
       }
 
       // Handle hypothecation if applicable
+      await pauseAt('Proposal -> Hypothecation');
       const hypothecationHandled = await this.handleHypothecation(payload, logger);
       
       if (!hypothecationHandled) {
@@ -119,6 +131,7 @@ const ICICIProposal = {
       }
 
       // Fill mobile number
+      await pauseAt('Proposal -> Mobile');
       filled = await this.fillMobileNumber(payload, logger);
       
       if (!filled) {
@@ -126,7 +139,16 @@ const ICICIProposal = {
       }
 
       // Fill email
+      await pauseAt('Proposal -> Email');
       filled = await this.fillEmail(payload, logger);
+
+      // Fill address line
+      await pauseAt('Proposal -> Address');
+      const addressFilled = await this.fillAddressLine(payload, logger);
+
+      if (!addressFilled) {
+        logger('Failed to fill address');
+      }
       
       if (!filled) {
         logger('⚠️ Failed to fill email');
@@ -172,7 +194,11 @@ const ICICIProposal = {
   async fillEngineNumber(payload, logger) {
     logger('🔍 Looking for engine number field...');
 
-    const engineNumber = payload?.vehicleInformation?.engineNumber || payload?.engineNumber || '';
+    const engineNumber =
+      payload?.vehicleDetails?.vehicleInformation?.engineNumber ||
+      payload?.vehicleInformation?.engineNumber ||
+      payload?.engineNumber ||
+      '';
     
     if (!engineNumber) {
       logger('⚠️ No engine number provided in payload');
@@ -218,7 +244,11 @@ const ICICIProposal = {
   async fillChassisNumber(payload, logger) {
     logger('🔍 Looking for chassis number field...');
 
-    const chassisNumber = payload?.vehicleInformation?.chassisNumber || payload?.chassisNumber || '';
+    const chassisNumber =
+      payload?.vehicleDetails?.vehicleInformation?.chassisNumber ||
+      payload?.vehicleInformation?.chassisNumber ||
+      payload?.chassisNumber ||
+      '';
     
     if (!chassisNumber) {
       logger('⚠️ No chassis number provided in payload');
@@ -265,7 +295,8 @@ const ICICIProposal = {
     logger('🔍 Looking for vehicle color field...');
 
     // Try to get color from payload, default to "black"
-    const vehicleColor = payload?.vehicleInformation?.vehicleColor || 
+    const vehicleColor = payload?.vehicleDetails?.vehicleInformation?.vehicleColor ||
+                        payload?.vehicleInformation?.vehicleColor || 
                         payload?.vehicleColor || 
                         'black';
     
@@ -577,7 +608,8 @@ const ICICIProposal = {
   async selectGenderTitle(payload, logger) {
     logger('🔍 Looking for title mat-select...');
 
-    const title = payload?.customerDetails?.title || payload?.title || '';
+    const rawTitle = payload?.customerDetails?.title || payload?.title || '';
+    const title = String(rawTitle).trim().toLowerCase() === 'miss' ? 'Ms' : rawTitle;
     
     if (!title) {
       logger('⚠️ No title provided in payload');
@@ -781,6 +813,72 @@ const ICICIProposal = {
     logger(`📝 Email filled: ${email}`);
     await new Promise(r => setTimeout(r, 500));
     
+    return true;
+  },
+
+  async fillAddressLine(payload, logger) {
+    logger('Looking for address line field...');
+
+    const customerDetails = payload?.customerDetails || {};
+    const address = customerDetails.address || customerDetails.adress || payload?.address || payload?.adress || {};
+    const addressLine = [
+      address.building || customerDetails.building,
+      address.street || customerDetails.street,
+      address.pincode || customerDetails.pincode,
+      address.locality || customerDetails.locality,
+      address.city || customerDetails.city,
+    ].map(part => String(part || '').trim()).filter(Boolean).join(', ');
+
+    if (!addressLine) {
+      logger('No address provided in payload');
+      return false;
+    }
+
+    logger(`Address to enter: ${addressLine}`);
+
+    const timeout = 10000;
+    const start = Date.now();
+    let input = null;
+
+    while (Date.now() - start < timeout) {
+      input = document.querySelector('input[formcontrolname="addressLine"]');
+
+      if (input) {
+        logger('Found address line field');
+        break;
+      }
+
+      await new Promise(r => setTimeout(r, 300));
+    }
+
+    if (!input) {
+      logger('Address line field not found after timeout');
+      return false;
+    }
+
+    highlightElement(input, '#ff9800', 1500);
+
+    const utils = window.flowUtils || {};
+    const clickFn = utils.clickElement || clickElement;
+    clickFn(input);
+
+    await new Promise(r => setTimeout(r, 300));
+
+    input.value = '';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+
+    for (let char of addressLine.slice(0, 400)) {
+      input.value += char;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 20));
+    }
+
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    input.dispatchEvent(new Event('blur', { bubbles: true }));
+    logger(`Address filled: ${input.value}`);
+    await new Promise(r => setTimeout(r, 500));
+
     return true;
   },
 
@@ -994,6 +1092,3 @@ function clickElement(el) {
 
 // Make ICICIProposal available globally
 window.ICICIProposal = ICICIProposal;
-
-
-

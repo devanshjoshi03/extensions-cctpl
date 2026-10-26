@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 72" role="img" aria-labelledby="title">
+  <title id="title">Go Digit Insurance</title>
+  <rect width="180" height="72" rx="5" fill="#fff" />
+  <path d="M16 20h22L23 36l15 16H16L2 36z" fill="#ffc928" />
+  <text x="46" y="49" fill="#202020" font-family="Arial, sans-serif" font-size="39" font-weight="700">digit</text>
+</svg>

@@ -1,0 +1,105 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  min-width: 380px;
+  color: #eef2f7;
+  background: #0f172a;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.container {
+  padding: 18px;
+}
+
+.header {
+  padding-bottom: 14px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.28);
+}
+
+h1 {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.start-btn {
+  width: 100%;
+  min-height: 42px;
+  border: 0;
+  border-radius: 6px;
+  color: #052e16;
+  background: #86efac;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.start-btn:hover:not(:disabled) {
+  background: #bbf7d0;
+}
+
+.start-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.status {
+  padding: 10px;
+  margin-top: 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.status.success {
+  color: #bbf7d0;
+  border: 1px solid rgba(34, 197, 94, 0.36);
+  background: rgba(22, 101, 52, 0.28);
+}
+
+.status.error {
+  color: #fecaca;
+  border: 1px solid rgba(239, 68, 68, 0.38);
+  background: rgba(127, 29, 29, 0.32);
+}
+
+.status.hidden {
+  display: none;
+}
+
+.logs-section {
+  margin-top: 16px;
+}
+
+.logs-title {
+  margin-bottom: 8px;
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.logs-output {
+  width: 100%;
+  height: 220px;
+  padding: 10px;
+  overflow-y: auto;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 6px;
+  color: #bfdbfe;
+  background: rgba(2, 6, 23, 0.74);
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.log-line {
+  white-space: pre-wrap;
+}
