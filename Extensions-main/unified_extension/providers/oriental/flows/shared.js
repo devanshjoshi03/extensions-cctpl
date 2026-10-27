@@ -574,6 +574,13 @@ function waitForContinueButton(timeoutMs = 10000) {
 //   }
 // }
 async function selectPrimeDropdown(dropdownSelector, value, isExactMatch = false) {
+  // Guard before anything touches the value: a missing one used to surface as
+  // "Cannot read properties of null (reading 'toLowerCase')" from inside the
+  // option loop, which says nothing about which field the request is missing.
+  const wanted = String(value == null ? '' : value).trim();
+  if (!wanted) {
+    throw new Error('No value supplied for the "' + dropdownSelector + '" dropdown');
+  }
   const dropdown = document.querySelector(dropdownSelector);
   if (!dropdown) return;
 
@@ -590,8 +597,8 @@ async function selectPrimeDropdown(dropdownSelector, value, isExactMatch = false
   const filter = panel.querySelector('.p-dropdown-filter');
   if (filter) {
     const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-    if (nativeSetter) nativeSetter.call(filter, value);
-    else filter.value = value;
+    if (nativeSetter) nativeSetter.call(filter, wanted);
+    else filter.value = wanted;
     filter.dispatchEvent(new Event('input', { bubbles: true }));
     await wait(500);
   }
@@ -602,7 +609,7 @@ async function selectPrimeDropdown(dropdownSelector, value, isExactMatch = false
   // First pass: Try exact match (== comparison) to avoid "petrol" matching "petrol+cng"
   let exactMatch = null;
   for (const option of options) {
-    if (option.innerText.trim().toLowerCase() === value.toLowerCase()) {
+    if (option.innerText.trim().toLowerCase() === wanted.toLowerCase()) {
       exactMatch = option;
       break;
     }
@@ -618,7 +625,7 @@ async function selectPrimeDropdown(dropdownSelector, value, isExactMatch = false
   // Second pass: Only if no exact match, try loose matching (includes)
   if (!isExactMatch) {
     for (const option of options) {
-      if (option.innerText.toLowerCase().includes(value.toLowerCase())) {
+      if (option.innerText.toLowerCase().includes(wanted.toLowerCase())) {
         clickElement(option);
         break;
       }
@@ -653,6 +660,11 @@ async function fillPrimeDropdownByLabel(labelText, value) {
     return null;
   }
 
+  const wanted = String(value == null ? '' : value).trim();
+  if (!wanted) {
+    throw new Error('No value supplied for the "' + labelText + '" dropdown');
+  }
+
   const dropdown = getDropdownByLabel(labelText);
   if (!dropdown) {
     console.log("Dropdown not found:", labelText);
@@ -668,7 +680,7 @@ async function fillPrimeDropdownByLabel(labelText, value) {
   const filter = panel.querySelector('.p-dropdown-filter');
 
   if (filter) {
-    filter.value = value;
+    filter.value = wanted;
     filter.dispatchEvent(new Event('input', { bubbles: true }));
     await wait(400);
   }
@@ -676,7 +688,7 @@ async function fillPrimeDropdownByLabel(labelText, value) {
   const options = panel.querySelectorAll('.p-dropdown-item');
 
   for (const option of options) {
-    if (option.innerText.trim().toLowerCase().includes(value.toLowerCase())) {
+    if (option.innerText.trim().toLowerCase().includes(wanted.toLowerCase())) {
       click(option);
       break;
     }

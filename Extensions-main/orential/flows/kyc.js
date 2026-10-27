@@ -1334,8 +1334,15 @@ await wait(125);
         }
       }
 
+      // Address proof (OVD) is required whether the identity came from PAN or
+      // Form 60, and it is master data: the frontend has to send the portal's
+      // own value. Checking it here names the missing field instead of letting
+      // the dropdown helper fail on an empty value further in.
+      if (!String(c.documentType == null ? '' : c.documentType).trim()) {
+        throw new Error('customerDetails.documentType is required (address document to upload)');
+      }
       // select address document dropdown
-      await selectPrimeDropdown("#addressDocument", c.documentType,false);
+      await selectPrimeDropdown("#addressDocument", c.documentType, false);
 
       // fill aadhaar number
       const aadhaarNumberInput = this.findVisibleElement('input[id="addressDocumentNumber"]', root, { allowDisabled: false });
