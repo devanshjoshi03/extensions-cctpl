@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Kshema">
+  <rect width="128" height="128" rx="24" fill="#0F766E"/>
+  <path d="M64 15 99 28v27c0 24.2-14 43.4-35 54-21-10.6-35-29.8-35-54V28l35-13Z" fill="#ECFEFF"/>
+  <path d="M48 38h12v21.8L78 38h14.5L73.2 61l21.1 31H79.6L64.4 69.8 60 75.1V92H48V38Z" fill="#0F766E"/>
+</svg>

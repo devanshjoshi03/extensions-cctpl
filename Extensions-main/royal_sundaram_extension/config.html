@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Royal Sundaram Extension Settings</title>
+  <link rel="stylesheet" href="config.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Royal Sundaram Extension Settings</h1>
+
+    <div class="section">
+      <h2>OpenAI CAPTCHA Solver</h2>
+      <div class="form-group">
+        <label for="api-key">API Key</label>
+        <input type="password" id="api-key" placeholder="sk-...">
+      </div>
+      <div class="form-group">
+        <label for="model">Model</label>
+        <select id="model">
+          <option value="gpt-4o">gpt-4o</option>
+          <option value="gpt-4o-mini">gpt-4o-mini</option>
+          <option value="gpt-4-turbo">gpt-4-turbo</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>OTP Service</h2>
+      <div class="form-group">
+        <label for="otp-email">OTP Email</label>
+        <input type="email" id="otp-email" placeholder="otpcoverscrafter@gmail.com">
+      </div>
+      <div class="form-group">
+        <label for="otp-label">OTP Label</label>
+        <input type="text" id="otp-label" placeholder="ROYAL_SUNDARAM">
+      </div>
+      <div class="form-group">
+        <label for="otp-api">OTP API Base</label>
+        <input type="url" id="otp-api" placeholder="https://otpservice.coverscrafter.com/api/v1/otp">
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Royal Sundaram Agent</h2>
+      <div class="form-group">
+        <label for="default-username">Default Username</label>
+        <input type="text" id="default-username" placeholder="Enter username">
+      </div>
+      <div class="form-group">
+        <label for="default-password">Default Password</label>
+        <input type="password" id="default-password" placeholder="Enter password">
+      </div>
+    </div>
+
+    <button id="save-btn" class="btn">Save Settings</button>
+    <div id="status" class="status hidden"></div>
+  </div>
+  <script src="config.js"></script>
+</body>
+</html>

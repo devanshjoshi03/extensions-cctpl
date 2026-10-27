@@ -6,6 +6,12 @@
 
 const ICICIQuote = {
   async run(payload, logger = console.log) {
+    const pauseAt = async (label) => window.AutomationPauseController?.checkpoint(label);
+    const pauseAwareWait = async (ms) => {
+      const waitFn = window.flowUtils?.controlledWait || window.flowUtils?.wait;
+      if (waitFn) return waitFn(ms);
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    };
     logger('🚀 Starting ICICI Lombard quote flow...');
     logger('Current URL:', window.location.href);
 
@@ -19,9 +25,11 @@ const ICICIQuote = {
       logger('✅ On quote page');
 
       // Wait for quote page to fully load
+      await pauseAt('Quote -> Load');
       await this.waitForQuotePageLoad(logger);
 
       // Find and click the sidebar open button
+      await pauseAt('Quote -> Open sidebar');
       let clicked = await this.clickSidebarButton(logger);
       
       if (!clicked) {
@@ -30,9 +38,10 @@ const ICICIQuote = {
       }
 
       // Wait for sidebar to open
-      await new Promise(r => setTimeout(r, 1500));
+      await pauseAwareWait(1500);
 
       // Find and click the Package link
+      await pauseAt('Quote -> Package');
       clicked = await this.clickPackageLink(logger);
       
       if (!clicked) {
@@ -41,6 +50,7 @@ const ICICIQuote = {
       }
 
       // Find and click the "New Business" radio button
+      await pauseAt('Quote -> New Business');
       clicked = await this.selectNewBusinessPolicy(logger);
       
       if (!clicked) {
@@ -49,6 +59,7 @@ const ICICIQuote = {
       }
 
       // Fill city field and select from dropdown
+      await pauseAt('Quote -> RTO city');
       let filled = await this.fillCityField(payload, logger);
       
       if (!filled) {
@@ -56,6 +67,7 @@ const ICICIQuote = {
       }
 
       // Fill Select make & model field (model + variant) and select from dropdown
+      await pauseAt('Quote -> Make and model');
       filled = await this.fillMakeModelField(payload, logger);
       
       if (!filled) {
@@ -63,6 +75,7 @@ const ICICIQuote = {
       }
 
       // Click Get Quote button
+      await pauseAt('Quote -> Get Quote');
       clicked = await this.clickGetQuoteButton(logger);
       
       if (!clicked) {
@@ -483,7 +496,13 @@ const ICICIQuote = {
   async fillCityField(payload, logger) {
     logger('🔍 Looking for City/RTO field...');
 
-    const city = payload?.vehicleDetails?.rtoCity || payload?.vehicleDetails?.rtocity || payload?.city || payload?.customerDetails?.city || '';
+    const city =
+      payload?.vehicleDetails?.rto ||
+      payload?.vehicleDetails?.rtoCity ||
+      payload?.vehicleDetails?.rtocity ||
+      payload?.city ||
+      payload?.customerDetails?.city ||
+      '';
     
     if (!city) {
       logger('⚠️ No city provided in payload');
@@ -596,56 +615,49 @@ const ICICIQuote = {
     return true;
   },
 
-  buildMakeModelSearchText(model, variant) {
+  buildMakeModelSearchText(make, model, variant) {
+    make = (make || '').trim();
     model = (model || '').trim();
     variant = (variant || '').trim();
-    if (!model && !variant) return '';
-    if (!model) return variant;
-    if (!variant) return model;
-    if (variant.toUpperCase().includes(model.toUpperCase())) return variant;
-    return `${model} ${variant}`;
+    if (make && variant) return `${make}-${variant}`;
+    if (model && variant) return `${model}-${variant}`;
+    if (variant) return variant;
+    return make || model;
   },
 
   tokenizeForMatch(str) {
     return (str || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean);
   },
 
+  normalizeMakeModelText(str) {
+    return this.tokenizeForMatch(str).join(' ');
+  },
+
   scoreMakeModelOption(optionText, model, variant, searchText) {
-    const textUpper = optionText.toUpperCase();
-    const searchUpper = searchText.toUpperCase();
-    const modelUpper = (model || '').toUpperCase();
-    const variantUpper = (variant || '').toUpperCase();
+    const textNormalized = this.normalizeMakeModelText(optionText);
+    const searchNormalized = this.normalizeMakeModelText(searchText);
+    const variantNormalized = this.normalizeMakeModelText(variant);
 
-    let score = 0;
-
-    if (textUpper === searchUpper) score += 100;
-    else if (textUpper.includes(searchUpper) || searchUpper.includes(textUpper)) score += 50;
-
-    if (modelUpper && textUpper.includes(modelUpper)) score += 20;
-    if (variantUpper && textUpper.includes(variantUpper)) score += 30;
-
-    const modelTokens = new Set(this.tokenizeForMatch(model));
-    const variantTokens = this.tokenizeForMatch(variant).filter(t => !modelTokens.has(t));
-    const optionTokens = new Set(this.tokenizeForMatch(optionText));
-    const matchedVariantTokens = variantTokens.filter(t => optionTokens.has(t));
-    score += matchedVariantTokens.length * 5;
-
-    return score;
+    if (!textNormalized) return 0;
+    if (variantNormalized && textNormalized === variantNormalized) return 1000;
+    if (searchNormalized && textNormalized === searchNormalized) return 900;
+    return 0;
   },
 
   async fillMakeModelField(payload, logger) {
     logger('🔍 Looking for Select make & model field...');
 
+    const make = payload?.vehicleDetails?.make || payload?.make || '';
     const model = payload?.vehicleDetails?.model || payload?.model || '';
     const variant = payload?.vehicleDetails?.variant || payload?.variant || '';
-    const searchText = this.buildMakeModelSearchText(model, variant);
+    const searchText = this.buildMakeModelSearchText(make, model, variant);
 
     if (!searchText) {
-      logger('⚠️ No model or variant provided in payload');
+      logger('⚠️ No make/model or variant provided in payload');
       return false;
     }
 
-    logger(`📝 Make & model to enter: ${searchText} (model: ${model || 'n/a'}, variant: ${variant || 'n/a'})`);
+    logger(`📝 Make & model to enter: ${searchText} (make: ${make || 'n/a'}, model: ${model || 'n/a'}, variant: ${variant || 'n/a'})`);
 
     let makeModelInput = document.querySelector('input[formcontrolname="manufacture"]');
 
@@ -719,9 +731,11 @@ const ICICIQuote = {
       .filter(entry => entry.score > 0)
       .sort((a, b) => b.score - a.score);
 
+    logger(`🔍 Matching make & model options: ${scored.slice(0, 5).map(entry => `${entry.score}:${entry.text}`).join(' | ') || 'none'}`);
+
     if (scored.length > 0) {
       const best = scored[0];
-      logger(`✅ Found matching make & model option (score ${best.score}): ${best.text}`);
+      logger(`✅ Found exact make & model option: ${best.text}`);
 
       best.option.scrollIntoView({ behavior: 'smooth', block: 'center' });
       await new Promise(r => setTimeout(r, 300));
@@ -736,8 +750,8 @@ const ICICIQuote = {
       return true;
     }
 
-    logger('⚠️ Make & model option not found in dropdown, but field is filled');
-    return true;
+    logger(`❌ Exact make & model option not found. Expected exactly: ${variant || searchText}`);
+    return false;
   },
 
   async clickGetQuoteButton(logger) {

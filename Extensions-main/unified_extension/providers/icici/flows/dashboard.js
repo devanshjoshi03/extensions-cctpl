@@ -6,6 +6,7 @@
 
 const ICICIDashboard = {
   async run(payload, logger = console.log) {
+    const pauseAt = async (label) => window.AutomationPauseController?.checkpoint(label);
     logger('🚀 Starting ICICI Lombard dashboard flow...');
     logger('Current URL:', window.location.href);
 
@@ -19,9 +20,11 @@ const ICICIDashboard = {
       logger('✅ On dashboard page');
 
       // Wait for dashboard to fully load
+      await pauseAt('Dashboard -> Load');
       await this.waitForDashboardLoad(logger);
 
       // Find and click the "Cover all accidental damage" category
+      await pauseAt('Dashboard -> Cover all accidental damage');
       const clicked = await this.clickCoverCategory(logger);
       
       if (!clicked) {

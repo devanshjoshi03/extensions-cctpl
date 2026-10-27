@@ -1,0 +1,75 @@
+{
+  "manifest_version": 3,
+  "name": "Kshema Insurance Automation",
+  "version": "1.0.0",
+  "description": "Automation setup for Kshema Insurance portal",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting",
+    "tabs",
+    "downloads"
+  ],
+  "host_permissions": [
+    "https://motorinsurance.kshema.co/*",
+    "https://assurehub.kshema.co/*",
+    "https://api.openai.com/*"
+  ],
+  "options_page": "config.html",
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://motorinsurance.kshema.co/*"
+      ],
+      "js": [
+        "quote-response-hook.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://motorinsurance.kshema.co/*"
+      ],
+      "js": [
+        "flows/login.js",
+        "flows/policy.js",
+        "flows/addon.js",
+        "flows/summary.js",
+        "flows/customer-details.js",
+        "flows/other-details.js",
+        "flows/kyc.js",
+        "flows/payment.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://assurehub.kshema.co/*"
+      ],
+      "js": [
+        "flows/kyc.js",
+        "flows/payment.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
