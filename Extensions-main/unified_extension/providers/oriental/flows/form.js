@@ -47,9 +47,22 @@ const OrientalForm = {
       if (!brandSearch) {
         throw new Error('Vehicle brand / model / variant is missing from the request payload');
       }
-      const selectedModel = await selectPrimeAutocomplete(ORIENTAL_SELECTORS.vehicalBrandModelVariantInput, brandSearch);
-      if (!selectedModel) {
-        throw new Error('Vehicle brand / model / variant "' + brandSearch + '" was not selected');
+
+      try {
+        const selectedModel = await selectPrimeAutocomplete(ORIENTAL_SELECTORS.vehicalBrandModelVariantInput, brandSearch);
+        if (!selectedModel) {
+          throw new Error('Vehicle brand / model / variant "' + brandSearch + '" was not selected');
+        }
+      } catch (error) {
+        if (!String(error?.message || '').startsWith('MANUAL_VEHICLE_PROMPT:')) throw error;
+        logger('⚠️ Oriental has no catalogue entry for "' + brandSearch
+          + '"; entering the vehicle details manually. The portal subjects manually entered '
+          + 'vehicles to Maker-Checker approval by the issuing office.');
+        await fillManualVehicleDetails(v, logger);
+        logger('✅ Manual vehicle details accepted by Oriental');
+        // The Add Details dialog advances the step on its own Continue, so the
+        // usual Continue click below must be skipped.
+        return;
       }
 
       // Wait for Continue to be enabled, then click to reveal engine/chassis slide
@@ -60,31 +73,41 @@ const OrientalForm = {
     await fillBrandModelVariant();
 
     await AutomationPauseController.checkpoint('Section A → Engine & Chassis Numbers');
-    // Wait for slide to load and engine input to appear
-    const engineInput = await waitForElement('#engineNumber', { timeoutMs: 7500, root });
-    if (engineInput && vi.engineNumber) {
-      console.log('Filling engine number', vi.engineNumber);
-      fillInput(engineInput, vi.engineNumber);
-    } else {
-      console.log("Skipping engine number", engineInput ? '(no data)' : '(input not found)');
-    }
+    // Oriental can reopen the manual-entry prompt after engine/chassis, so the
+    // whole step is retried once with the details submitted again.
+    for (let manualRetry = 0; manualRetry < 2; manualRetry++) {
+      // Wait for slide to load and engine input to appear
+      const engineInput = await waitForElement('#engineNumber', { timeoutMs: 7500, root });
+      if (engineInput && vi.engineNumber) {
+        console.log('Filling engine number', vi.engineNumber);
+        fillInput(engineInput, vi.engineNumber);
+      } else {
+        console.log("Skipping engine number", engineInput ? '(no data)' : '(input not found)');
+      }
 
-    const chassisInput = await waitForElement('#chassisNumber', { timeoutMs: 7500, root });
-    if (chassisInput && vi.chassisNumber) {
-      console.log('Filling chassis number', vi.chassisNumber);
+      const chassisInput = await waitForElement('#chassisNumber', { timeoutMs: 7500, root });
+      if (chassisInput && vi.chassisNumber) {
+        console.log('Filling chassis number', vi.chassisNumber);
+        await wait(100);
+        fillInput(chassisInput, vi.chassisNumber);
+      } else {
+        console.log("Skipping chassis number", chassisInput ? '(no data)' : '(input not found)');
+      }
+
       await wait(100);
-      fillInput(chassisInput, vi.chassisNumber);
-    } else {
-      console.log("Skipping chassis number", chassisInput ? '(no data)' : '(input not found)');
+      try {
+        // Click Continue first to reveal the form section
+        await this.clickContinue(root);
+        if (findManualVehiclePrompt()) {
+          throw new Error('MANUAL_VEHICLE_PROMPT: Oriental requested manual vehicle details again');
+        }
+        break;
+      } catch (error) {
+        if (!String(error?.message || '').startsWith('MANUAL_VEHICLE_PROMPT:') || manualRetry > 0) throw error;
+        logger('⚠️ Oriental reopened manual vehicle details after engine/chassis; submitting them once more');
+        await fillManualVehicleDetails(v, logger);
+      }
     }
- 
-    
-
-
-
-    await wait(100);
-    // Click Continue first to reveal the form section
-    await this.clickContinue(root); 
 
     await wait(250);
     await AutomationPauseController.checkpoint('Section A → Seating & Cubic Capacity');

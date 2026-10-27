@@ -911,7 +911,7 @@ await wait(125);
     return false;
   },
 
-  async handleForm60Generation(customer, root = this.getActiveSlideRoot(), logger = console.log) {
+  async handleForm60Generation(customer, root = this.getActiveSlideRoot(), logger = console.log, options = {}) {
     const existingDialog = this.getVisibleForm60Dialog();
     let dialog = existingDialog;
 
@@ -1031,6 +1031,13 @@ await wait(125);
 
     const generated = await this.waitForForm60GeneratedState(root, 12000);
     if (!generated) {
+      if (options.fromInitiateDialog) {
+        // The "successfully generated" chip belongs to the inline KYC form; the
+        // Initiate KYC dialog does not render one. The OTP verification and the
+        // preview dialog above already confirmed the form was accepted.
+        logger('✅ Form 60 generated via the Initiate KYC dialog (no inline success chip to check)');
+        return true;
+      }
       logger('⚠️ Form 60 success state not visible on KYC page');
       return false;
     }
@@ -1049,6 +1056,80 @@ await wait(125);
     await this.clickContinue(document);
     await wait(100);
     return true;
+  },
+
+  // Drops salutations and punctuation so a cosmetic "Mr" prefix is not read as a
+  // real difference between the portal's KYC name and the one in the request.
+  nameParts(value) {
+    const titles = ['MR', 'MRS', 'MS', 'MISS', 'SHRI', 'SHRIMATI', 'SMT', 'DR', 'M/S', 'MST'];
+    return String(value || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toUpperCase()
+      .split(' ')
+      .map((part) => part.replace(/[^A-Z]/g, ''))
+      .filter((part) => part && !titles.includes(part));
+  },
+
+  /**
+   * Makes the portal's full name match the request. The field is disabled and
+   * filled from the KYC record stored at Form 60 / OVD, which regularly drops a
+   * middle name. The request is the source of truth, so a difference unlocks the
+   * field and overwrites it instead of failing the run.
+   */
+  async applyFullName(root, fullName, logger = console.log) {
+    if (!fullName) return;
+    const nameInput = this.findVisibleElement(ORIENTAL_SELECTORS.fullNameInput, root);
+    if (!nameInput) {
+      logger('Full name input not found on personal details - name left as the portal had it');
+      return;
+    }
+    const portalName = String(nameInput.value || '').trim();
+    if (this.nameParts(portalName).join(' ') === this.nameParts(fullName).join(' ')) {
+      logger('Portal full name matches request: "' + portalName + '"');
+      return;
+    }
+    logger('Full name mismatch - replacing portal name "' + (portalName || '(empty)') + '" with "' + fullName + '"');
+    const applied = await fillLockedInput(nameInput, fullName);
+    if (!applied) {
+      throw new Error('KYC full name did not retain "' + fullName + '" after unlocking (portal kept "' + (String(nameInput.value || '') || '(empty)') + '")');
+    }
+    logger('Full name set from request: "' + fullName + '"');
+  },
+
+  /**
+   * Ticks "Same as Permanent" so the portal copies the permanent address into the
+   * Current Address block. Without it the slide fails Continue with "Please enter
+   * Current Address" / "Please enter current State".
+   */
+  async applySameAsPermanent(root, address, logger = console.log) {
+    const checkbox = this.findVisibleElement(ORIENTAL_SELECTORS.samePermanentAddressCheckbox, root);
+    if (!checkbox) {
+      logger('"Same as Permanent" checkbox not found - current address left to the portal');
+      return;
+    }
+    if (!(await setCheckboxChecked(checkbox, true))) {
+      throw new Error('Could not select "Same as Permanent" address');
+    }
+    logger('Selected "Same as Permanent" for the current address');
+    await wait(250);
+
+    const currentAddress = this.findVisibleElement(ORIENTAL_SELECTORS.currentAddressInput, root);
+    if (!currentAddress) return;
+    if (String(currentAddress.value || '').trim()) return;
+
+    // The copy runs in a React effect; one re-toggle settles it when it does not land.
+    logger('Current address still empty after "Same as Permanent" - re-toggling');
+    await setCheckboxChecked(checkbox, false);
+    await wait(200);
+    await setCheckboxChecked(checkbox, true);
+    await wait(400);
+    if (String(currentAddress.value || '').trim()) return;
+
+    logger('Portal never copied the address - filling the current address from the request');
+    if (address && !(await fillLockedInput(currentAddress, address))) {
+      throw new Error('Current address could not be populated');
+    }
   },
 
   async fillPersonalDetails(kycData, logger = console.log) {
@@ -1079,8 +1160,7 @@ await wait(125);
       addr.pincode || p.pincode
     ].filter(Boolean).join(', ');
 
-    const nameInput = this.findVisibleElement(ORIENTAL_SELECTORS.fullNameInput, root, { allowDisabled: false });
-    if (nameInput && fullName) fillInput(nameInput, fullName);
+    await this.applyFullName(root, fullName, logger);
 
     const mobileInput = this.findVisibleElement(ORIENTAL_SELECTORS.mobileNumberInput, root, { allowDisabled: false });
     if (mobileInput && mobileValue) fillInput(mobileInput, mobileValue);
@@ -1094,8 +1174,24 @@ await wait(125);
     const emailInput = this.findVisibleElement(ORIENTAL_SELECTORS.emailInput, root, { allowDisabled: false });
     if (emailInput) fillInput(emailInput, otpEmail);
 
-    const permanentAddressInput = this.findVisibleElement(ORIENTAL_SELECTORS.permanentAddressInput, root, { allowDisabled: false });
-    if (permanentAddressInput && address) fillInput(permanentAddressInput, address);
+    // Clear "Same as Permanent" first: an already-ticked box holds a stale copy of
+    // the address, and the portal only re-copies on the next tick.
+    const sameAsPermanent = this.findVisibleElement(ORIENTAL_SELECTORS.samePermanentAddressCheckbox, root);
+    if (sameAsPermanent && sameAsPermanent.checked) {
+      await setCheckboxChecked(sameAsPermanent, false);
+      await wait(150);
+    }
+
+    const permanentAddressInput = this.findVisibleElement(ORIENTAL_SELECTORS.permanentAddressInput, root);
+    if (permanentAddressInput && address) {
+      if (permanentAddressInput.disabled || permanentAddressInput.readOnly) {
+        if (!(await fillLockedInput(permanentAddressInput, address))) {
+          throw new Error('Permanent address did not retain the supplied customer address');
+        }
+      } else {
+        fillInput(permanentAddressInput, address);
+      }
+    }
 
     const state = addr.state || p.state;
     const city = addr.city || p.city;
@@ -1109,6 +1205,9 @@ await wait(125);
       await fillPrimeDropdownByLabel("Pincode", pincode);
       await wait(50);
     }
+
+    // Tick it only now, so the portal copies the corrected permanent address.
+    await this.applySameAsPermanent(root, address, logger);
 
     // Date of Birth
     const dobInput = this.findVisibleElement("input[name='dob']", root);
@@ -1188,9 +1287,227 @@ await wait(125);
     return { success: true };
   },
 
+  getVisibleKYCDialog() {
+    const dialog = document.querySelector(ORIENTAL_SELECTORS.kycDialog);
+    return dialog && this.isVisibleElement(dialog) ? dialog : null;
+  },
+
+  async waitForKYCDialog(timeoutMs = 8000) {
+    const start = Date.now();
+    return new Promise((resolve) => {
+      const check = () => {
+        const dialog = this.getVisibleKYCDialog();
+        if (dialog) { resolve(dialog); return; }
+        if (Date.now() - start > timeoutMs) { resolve(null); return; }
+        setTimeout(check, 200);
+      };
+      check();
+    });
+  },
+
+  findKYCDialogOption(dialog, text) {
+    if (!dialog) return null;
+    const needle = String(text || '').trim().toLowerCase();
+    const options = dialog.querySelectorAll('.kyc-option, .user-type-option');
+    for (const option of options) {
+      if (option.textContent.trim().toLowerCase().includes(needle)) return option;
+    }
+    return null;
+  },
+
+  // A cheap fingerprint of which step the dialog is showing, used to tell
+  // "Continue advanced the dialog" from "Continue did nothing".
+  getKYCDialogSignature() {
+    const dialog = this.getVisibleKYCDialog();
+    if (!dialog) return 'closed';
+    const heading = dialog.querySelector('h2')?.textContent?.trim() || '';
+    const step = dialog.querySelector('.kyc-method') ? 'method' : 'initiate';
+    return step + ':' + heading;
+  },
+
+  // Inline validation text the dialog shows when Continue is refused.
+  readKYCDialogValidation() {
+    const dialog = this.getVisibleKYCDialog();
+    if (!dialog) return '';
+    const messages = Array.from(
+      dialog.querySelectorAll('.p-error, .error-msg, .errorMsg, .error-message, .invalid-feedback')
+    )
+      .map((el) => (el.textContent || '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+    return Array.from(new Set(messages)).join(' | ');
+  },
+
+  async clickKYCDialogProceed(label, logger = console.log) {
+    const dialog = this.getVisibleKYCDialog();
+    if (!dialog) { logger('⚠️ ' + label + ': Initiate KYC dialog not visible'); return false; }
+    const btn = dialog.querySelector('button.proceed-btn')
+      || Array.from(dialog.querySelectorAll('button')).find((b) => /continue/i.test(b.textContent));
+    if (!btn) { logger('⚠️ ' + label + ': Continue button not found'); return false; }
+
+    const before = this.getKYCDialogSignature();
+    clickElement(btn);
+
+    // Give the dialog a moment to advance or close before reporting success.
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      if (this.getKYCDialogSignature() !== before) break;
+      await wait(250);
+    }
+    logger(label + ': clicked Continue');
+    return true;
+  },
+
+  /**
+   * Drives the Initiate KYC dialog to closure.
+   *
+   * The portal decides how many steps it shows: Continue on the Initiate step
+   * sometimes drops straight to the KYC form and sometimes stops on "Choose KYC
+   * Method", and after Form 60 that second step can take a few seconds to render.
+   * Probing for it once right after the click left the Form 60 path waiting on a
+   * dialog that was sitting on an unanswered method step, so each state is polled
+   * for instead and re-driven until the dialog closes.
+   */
+  async advanceKYCDialogToClose(label, logger = console.log) {
+    const deadline = Date.now() + 45000;
+    let proceedAttempts = 0;
+    let methodAttempts = 0;
+
+    while (Date.now() < deadline) {
+      const dialog = this.getVisibleKYCDialog();
+      if (!dialog) {
+        logger('✅ Initiate KYC dialog closed — KYC form should now be editable');
+        return true;
+      }
+
+      const method = dialog.querySelector('.kyc-method');
+      if (method && this.isVisibleElement(method)) {
+        if (methodAttempts >= 2) {
+          const validation = this.readKYCDialogValidation();
+          throw new Error(
+            label + ': the dialog kept returning to "Choose KYC Method"' + (validation ? ' - ' + validation : '')
+          );
+        }
+        methodAttempts++;
+        // The method step replaces the Initiate step, so its own Continue clicks
+        // do not count against the Initiate step's retry budget.
+        proceedAttempts = 0;
+        await this.selectOvdKycMethod(logger);
+        continue;
+      }
+
+      if (dialog.querySelector('button.proceed-btn')) {
+        if (proceedAttempts >= 3) {
+          const validation = this.readKYCDialogValidation();
+          throw new Error(
+            label + ': the dialog stayed on its current step after ' + proceedAttempts +
+            ' Continue clicks' + (validation ? ' - ' + validation : '')
+          );
+        }
+        proceedAttempts++;
+        await this.clickKYCDialogProceed(label + ' (Continue ' + proceedAttempts + ')', logger);
+        continue;
+      }
+
+      await wait(250);
+    }
+
+    const validation = this.readKYCDialogValidation();
+    throw new Error('Initiate KYC dialog did not close' + (validation ? ' - ' + validation : ''));
+  },
+
+  // The "Choose KYC Method" step (PAN path only). Always OVD — DigiLocker needs an
+  // interactive consent journey that cannot be driven here.
+  async selectOvdKycMethod(logger = console.log) {
+    const deadline = Date.now() + 15000;
+    let methodVisible = false;
+    while (Date.now() < deadline) {
+      const dialog = this.getVisibleKYCDialog();
+      if (!dialog) break; // dialog closed → portal dropped straight to the KYC form
+      const method = dialog.querySelector('.kyc-method');
+      if (method && this.isVisibleElement(method)) { methodVisible = true; break; }
+      await wait(250);
+    }
+    if (!methodVisible) { logger('ℹ️ Choose KYC Method step not shown — continuing'); return true; }
+
+    const dialog = this.getVisibleKYCDialog();
+    const ovd = this.findKYCDialogOption(dialog, 'officially valid document');
+    if (!ovd) { logger('⚠️ Choose KYC Method: OVD option not found'); return false; }
+    clickElement(ovd);
+    const radio = ovd.querySelector('input[type="radio"]');
+    if (radio) radio.click();
+    await wait(300);
+    if (!ovd.classList.contains('active')) {
+      logger('⚠️ Choose KYC Method: OVD option did not become active');
+    }
+    logger('Choose KYC Method: selected Officially Valid Document (OVD)');
+    await this.clickKYCDialogProceed('Choose KYC Method', logger);
+    return true;
+  },
+
+  // Answers the Initiate KYC dialog. Returns the path taken ('pan' | 'form60' |
+  // 'skipped') so fillKYCDetails knows whether Form 60 was already generated and
+  // whether the dialog pre-filled the PAN on the inline form behind it.
+  async handleInitiateKYCDialog(customer, logger = console.log) {
+    const dialog = await this.waitForKYCDialog(8000);
+    if (!dialog) {
+      // Older portal builds keep the PAN question inline on the KYC slide.
+      logger('ℹ️ Initiate KYC dialog not present — assuming inline KYC form');
+      return 'skipped';
+    }
+    logger('📋 Initiate KYC dialog opened');
+
+    const customerType = this.resolveCustomerType(customer);
+    const wantCorporate = customerType === 'Corporate';
+    const typeOption = this.findKYCDialogOption(dialog, wantCorporate ? 'corporate' : 'individual');
+    if (typeOption) {
+      clickElement(typeOption);
+      const radio = typeOption.querySelector('input[type="radio"]');
+      if (radio) radio.click();
+      await wait(150);
+      logger('Initiate KYC: selected user type ' + (wantCorporate ? 'Corporate' : 'Individual'));
+    } else {
+      logger('⚠️ Initiate KYC: user type option not found');
+    }
+
+    const pan = String(customer?.pan || customer?.panNumber || '').trim().toUpperCase();
+    if (this.hasPanCard(customer) && pan) {
+      const panInput = dialog.querySelector('#panNumber');
+      if (!panInput) { logger('⚠️ Initiate KYC: PAN input not found'); return 'skipped'; }
+      fillInput(panInput, pan);
+      await wait(150);
+      logger('Initiate KYC: entered PAN ' + pan);
+      await this.clickKYCDialogProceed('Initiate KYC', logger);
+      await this.advanceKYCDialogToClose('Initiate KYC', logger);
+      return 'pan';
+    }
+
+    // No PAN — generate Form 60 straight from the dialog.
+    logger('Initiate KYC: no PAN supplied — generating Form 60');
+    const form60Btn = Array.from(dialog.querySelectorAll('button')).find((b) =>
+      /generate form 60/i.test(b.textContent)
+    );
+    if (!form60Btn) { logger('⚠️ Initiate KYC: Generate Form 60 button not found'); return 'skipped'; }
+    clickElement(form60Btn);
+    const editableDialog = await this.waitForForm60Dialog(8000);
+    if (!editableDialog) throw new Error('Form 60 dialog did not open from the Initiate KYC dialog');
+    const ok = await this.handleForm60Generation(customer, this.getActiveSlideRoot(), logger, { fromInitiateDialog: true });
+    if (!ok) throw new Error('Form 60 generation failed from the Initiate KYC dialog');
+
+    // Form 60 leaves the dialog on either the Initiate step (needs Continue) or the
+    // method step, and the portal can take a few seconds to decide which.
+    // advanceKYCDialogToClose polls for whichever appears instead of probing once.
+    await this.advanceKYCDialogToClose('Initiate KYC (post Form 60)', logger);
+    return 'form60';
+  },
+
   async fillKYCDetails(kycData, logger = console.log) {
     const c = kycData?.customerDetails || kycData;
     const minimumUploadBytes = 50 * 1024;
+
+    // New portal: an "Initiate KYC" dialog gates the inline KYC form. It collects
+    // user type + PAN (or Form 60) and, on the PAN path, the OVD method. The inline
+    // form only renders once the dialog closes.
+    const kycPath = await this.handleInitiateKYCDialog(c, logger);
 
     const kycMarker = await this.waitForVisibleElement(['#fileInput2', '#addressDocument', '#pancardNumber'], 12000);
     if (!kycMarker) {
@@ -1204,14 +1521,28 @@ await wait(125);
     console.log(customerType, 'customerType');
     await this.selectChoiceInSection('User Type', customerType, root);
     await wait(75);
-    
+
       // Do you have pan yes or no radio button
       if(hasPan){
         await this.selectChoiceInSection('Do you have PAN Card', 'Yes', root);
         await wait(100);
-        // fill pan number
-        const panNumberInput = this.findVisibleElement('input[id="pancardNumber"]', root, { allowDisabled: false });
-        if (panNumberInput && (c.pan || c.panNumber)) fillInput(panNumberInput, c.pan || c.panNumber);
+        // PAN number. When the Initiate KYC dialog collected it, the portal renders
+        // this field pre-filled and disabled; a different value there means the
+        // proposal carries a different PAN than the request, which must not be
+        // papered over — so compare strictly and stop on a mismatch.
+        const requestedPan = String(c.pan || c.panNumber || '').trim().toUpperCase();
+        const panNumberInput = root.querySelector('input[id="pancardNumber"]');
+        if (panNumberInput) {
+          if (panNumberInput.disabled) {
+            const portalPan = String(panNumberInput.value || '').trim().toUpperCase();
+            if (requestedPan && portalPan && portalPan !== requestedPan) {
+              throw new Error('PAN mismatch on KYC form: portal holds "' + portalPan + '" but the request sent "' + requestedPan + '"');
+            }
+            logger('PAN pre-filled and locked by the portal: ' + (portalPan || '(empty)'));
+          } else if (requestedPan) {
+            fillInput(panNumberInput, requestedPan);
+          }
+        }
         // upload pan card image
         await uploadFile(
           ['input[id="fileInput2"]', 'input[name="inspectionReport"]'],
@@ -1223,7 +1554,11 @@ await wait(125);
             minimumBytes: minimumUploadBytes,
           }
         );
-      }else{
+      } else if (kycPath === 'form60') {
+        // Form 60 was already generated inside the Initiate KYC dialog; the inline
+        // PAN question is answered "No" and locked by the portal.
+        logger('No PAN — Form 60 already generated in the Initiate KYC dialog');
+      } else {
         await this.selectChoiceInSection('Do you have PAN Card', 'No', root);
         await wait(100);
         const form60Generated = await this.handleForm60Generation(c, root, logger);
@@ -1242,7 +1577,7 @@ await wait(125);
         }
       }
 
-      // select address document dropdown
+            // select address document dropdown
       await selectPrimeDropdown("#addressDocument", c.documentType,false);
 
       // fill aadhaar number

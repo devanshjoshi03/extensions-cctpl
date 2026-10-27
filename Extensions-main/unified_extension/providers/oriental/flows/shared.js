@@ -45,6 +45,97 @@ function fillInput(el, value) {
   el.dispatchEvent(new Event('blur', { bubbles: true }));
 }
 
+function getReactProps(el) {
+  if (!el) return null;
+  const key = Object.keys(el).find(
+    (k) => k.startsWith('__reactProps$') || k.startsWith('__reactEventHandlers$')
+  );
+  return key ? el[key] : null;
+}
+
+// The KYC slide renders the full name and permanent address as disabled inputs
+// built from whatever the Form 60 / OVD step stored. That record regularly
+// disagrees with the request (a dropped middle name, an OCR'd address), so the
+// lock comes off and the request value is written over it.
+function unlockInput(el) {
+  if (!el) return;
+  el.disabled = false;
+  el.readOnly = false;
+  el.removeAttribute('disabled');
+  el.removeAttribute('readonly');
+  el.removeAttribute('aria-disabled');
+  ['disabled', 'p-disabled', 'Mui-disabled', 'form-control-disabled'].forEach((cls) =>
+    el.classList.remove(cls)
+  );
+}
+
+function isFieldProtected(el) {
+  const fieldId = el && (el.id || el.name);
+  return !!(
+    fieldId &&
+    typeof AutomationPauseController !== 'undefined' &&
+    AutomationPauseController.isFieldProtected(fieldId)
+  );
+}
+
+// React keeps its own copy of a controlled input's value, so the write goes
+// through the native setter first; if React renders its value straight back, the
+// element's own onChange prop is invoked so application state moves too.
+async function fillLockedInput(el, value) {
+  if (!el) return false;
+  if (isFieldProtected(el)) {
+    console.log(`[Automation] 🛡️ Skipping protected field: ${el.id || el.name}`);
+    return true;
+  }
+  const nextValue = value == null ? '' : String(value);
+  unlockInput(el);
+  fillInput(el, nextValue);
+  await wait(150);
+  if (String(el.value || '') === nextValue) return true;
+
+  const props = getReactProps(el);
+  if (props && typeof props.onChange === 'function') {
+    setNativeInputValue(el, nextValue);
+    const event = new Event('change', { bubbles: true });
+    Object.defineProperty(event, 'target', { value: el });
+    Object.defineProperty(event, 'currentTarget', { value: el });
+    props.onChange(event);
+    await wait(150);
+  }
+  return String(el.value || '') === nextValue;
+}
+
+// Setting .checked directly is invisible to React, and the portal paints its
+// label over the box so a click on the label can miss. Click the input itself and
+// fall back to the component's handler when React never saw the click.
+async function setCheckboxChecked(el, checked) {
+  if (!el) return false;
+  const want = !!checked;
+  if (!!el.checked === want) return true;
+  if (isFieldProtected(el)) {
+    console.log(`[Automation] 🛡️ Skipping protected field: ${el.id || el.name}`);
+    return true;
+  }
+  unlockInput(el);
+  el.scrollIntoView({ block: 'center' });
+  el.click();
+  await wait(150);
+  if (!!el.checked === want) return true;
+
+  const props = getReactProps(el);
+  if (props && typeof props.onChange === 'function') {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'checked')?.set;
+    if (setter) setter.call(el, want);
+    else el.checked = want;
+    const event = new Event('click', { bubbles: true });
+    Object.defineProperty(event, 'target', { value: el });
+    Object.defineProperty(event, 'currentTarget', { value: el });
+    props.onChange(event);
+    await wait(150);
+  }
+  return !!el.checked === want;
+}
+
 async function typeIntoInput(el, value, options = {}) {
   if (!el) return false;
 
@@ -1004,18 +1095,13 @@ async function selectPrimeAutocomplete(inputSelector, value) {
     if (!spinner || !isElementVisible(spinner)) break;
     await wait(200);
   }
-  await wait(600);
-
   // Oriental offers manual entry when the vehicle is not in its catalogue.
   // Its wording uses a typographic apostrophe, so match the part without one.
-  const manualPrompt = Array.from(document.querySelectorAll('.p-dialog')).find((dialog) => {
+  const findManualPrompt = () => Array.from(document.querySelectorAll('.p-dialog')).find((dialog) => {
     if (!isElementVisible(dialog)) return false;
     const text = String(dialog.textContent || '').toLowerCase();
     return text.includes('find your vehicle') || text.includes('enter the details manually');
   });
-  if (manualPrompt) {
-    throw new Error('MANUAL_VEHICLE_PROMPT: Oriental has no catalogue entry for "' + searchText + '"');
-  }
 
   // Poll for the suggestions: PrimeNG renders the panel before its async
   // options arrive, and the option rows are not always given the
@@ -1039,9 +1125,15 @@ async function selectPrimeAutocomplete(inputSelector, value) {
       .filter((item) => isElementVisible(item));
   };
 
+  // A search answers with either suggestions or the manual-entry dialog, so poll
+  // for both: checking the dialog once, after a fixed pause, misses it whenever
+  // the portal renders it a moment later and sends the run into this 12s wait.
   let items = [];
   const itemsDeadline = Date.now() + 12000;
   while (Date.now() < itemsDeadline) {
+    if (findManualPrompt()) {
+      throw new Error('MANUAL_VEHICLE_PROMPT: Oriental has no catalogue entry for "' + searchText + '"');
+    }
     items = collectItems();
     if (items.length > 0) break;
     await wait(250);
@@ -1089,6 +1181,164 @@ async function selectPrimeAutocomplete(inputSelector, value) {
   }
   console.log('Selected autocomplete item:', selectedText);
   return selectedText;
+}
+
+// ─── Manual vehicle entry ───────────────────────────────────────────────────
+//
+// Oriental offers "enter the details manually" when a vehicle is not in its
+// catalogue. The quote still goes through, but the portal then routes the
+// proposal to Maker-Checker approval by the issuing office. Mirrors
+// fillManualVehicleDetails in the Playwright target.
+
+function findVisibleDialog(predicate) {
+  return Array.from(document.querySelectorAll('.p-dialog')).find(
+    (dialog) => isElementVisible(dialog) && predicate(dialog)
+  ) || null;
+}
+
+function findManualVehiclePrompt() {
+  // Oriental's wording uses a typographic apostrophe, so match the part without one.
+  return findVisibleDialog((dialog) => {
+    const text = String(dialog.textContent || '').toLowerCase();
+    return text.includes('find your vehicle') || text.includes('enter the details manually');
+  });
+}
+
+function findManualVehicleForm() {
+  // Identify the Add Details dialog by a field it has to contain rather than by
+  // its title, which is rendered after the dialog opens.
+  return findVisibleDialog((dialog) => !!dialog.querySelector('input[name="cubicCapacity"]'));
+}
+
+async function fillManualVehicleDetails(v, logger = console.log) {
+  // The portal drops the first click on Proceed often enough that a single
+  // attempt fails the quote while the prompt is still sitting there.
+  let form = findManualVehicleForm();
+  for (let attempt = 1; attempt <= 3 && !form; attempt++) {
+    const prompt = findManualVehiclePrompt();
+    if (prompt) {
+      const proceed = Array.from(prompt.querySelectorAll('button.footer-red, button'))
+        .find((btn) => /proceed/i.test(btn.textContent || ''));
+      if (proceed) clickElement(proceed);
+    }
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline && !form) {
+      await wait(200);
+      form = findManualVehicleForm();
+    }
+  }
+  if (!form) {
+    throw new Error('Oriental did not open its Add Details dialog after the manual vehicle entry prompt');
+  }
+  logger('Add Details dialog open - entering the vehicle manually');
+
+  // Make is a PrimeNG autocomplete: it only searches on real keystrokes, so
+  // setting the value leaves the field populated with no suggestion list.
+  const makeInput = form.querySelector('input[name="make"]');
+  if (!makeInput) throw new Error('Add Details dialog has no Make field');
+  if (!v.make) throw new Error('vehicleDetails.make is required for manual vehicle entry');
+  await typeIntoInput(makeInput, v.make, { perKeyDelay: 60, blur: false });
+
+  const makeLoaderVisible = () => {
+    const wrapper = makeInput.closest('.carmodelclass') || form;
+    const loader = wrapper.querySelector('.p-autocomplete-loader');
+    return !!loader && isElementVisible(loader);
+  };
+  const loaderDeadline = Date.now() + 15000;
+  while (Date.now() < loaderDeadline && makeLoaderVisible()) await wait(200);
+
+  const wantedMake = String(v.make).trim().toLowerCase();
+  const collectMakeOptions = () =>
+    Array.from(document.querySelectorAll('.p-autocomplete-item, .p-autocomplete-option'))
+      .filter((item) => isElementVisible(item));
+  const findMakeOption = () =>
+    collectMakeOptions().find((item) => String(item.textContent || '').trim().toLowerCase() === wantedMake) || null;
+  const waitForMakeOption = async () => {
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline) {
+      const option = findMakeOption();
+      if (option) return option;
+      await wait(200);
+    }
+    return null;
+  };
+
+  let makeOption = await waitForMakeOption();
+  if (!makeOption) {
+    // The field carries a dropdown button that lists every make the portal
+    // knows, which also covers a search that returned nothing.
+    const dropdownBtn = form.querySelector('button.p-autocomplete-dropdown');
+    if (dropdownBtn) clickElement(dropdownBtn);
+    makeOption = await waitForMakeOption();
+  }
+  if (!makeOption) {
+    const available = collectMakeOptions()
+      .map((item) => String(item.textContent || '').trim())
+      .filter(Boolean);
+    throw new Error(
+      'Oriental does not list the make "' + v.make + '" for manual vehicle entry'
+      + (available.length ? '. Available: ' + available.slice(0, 15).join(', ') : '')
+    );
+  }
+
+  // The row can carry the click handler on an inner element, so send a full
+  // mouse sequence rather than relying on a bare .click().
+  makeOption.scrollIntoView({ block: 'center' });
+  for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+    makeOption.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+  }
+  await wait(400);
+
+  // The dialog only validates a field once it has been touched, and Continue
+  // stays disabled until every field validates - so each one is focused,
+  // filled and blurred rather than just assigned.
+  const fillField = (name, value) => {
+    const field = form.querySelector('input[name="' + name + '"]');
+    if (!field) throw new Error('Add Details dialog has no "' + name + '" field');
+    fillInput(field, value);
+  };
+
+  fillField('model', v.model);
+  fillField('variant', v.variant);
+  fillField('seatingCapacity', String(v.seatingCapacity == null ? 2 : v.seatingCapacity));
+
+  const capacity = v.cubicCapacity != null ? v.cubicCapacity
+    : (v.motorCapacityKw != null ? v.motorCapacityKw : v.motorCapacity);
+  if (capacity == null || String(capacity).trim() === '') {
+    throw new Error('vehicleDetails.cubicCapacity is required for manual vehicle entry');
+  }
+  fillField('cubicCapacity', String(capacity));
+
+  if (v.msp == null || String(v.msp).trim() === '') {
+    throw new Error('vehicleDetails.msp is required for manual vehicle entry (the portal asks for the IDV)');
+  }
+  fillField('idv', String(v.msp));
+
+  // Oriental keeps Continue disabled until every field passes validation, and
+  // writes the reason into the per-field .error-msg elements.
+  const submitBtn = form.querySelector('button[type="submit"]');
+  if (!submitBtn) throw new Error('Add Details dialog has no Continue button');
+  const enabledBy = Date.now() + 15000;
+  while (submitBtn.disabled) {
+    if (Date.now() > enabledBy) {
+      const errors = Array.from(form.querySelectorAll('.error-msg'))
+        .map((el) => String(el.textContent || '').trim())
+        .filter(Boolean);
+      throw new Error(
+        'Oriental kept the Add Details Continue button disabled'
+        + (errors.length ? ': ' + errors.join('; ') : '')
+      );
+    }
+    await wait(250);
+  }
+  clickElement(submitBtn);
+
+  const closeBy = Date.now() + 15000;
+  while (Date.now() < closeBy) {
+    if (!findManualVehicleForm()) return true;
+    await wait(250);
+  }
+  throw new Error('Oriental did not close its Add Details dialog after Continue');
 }
 
 /**
@@ -1970,6 +2220,18 @@ const ORIENTAL_SELECTORS = {
   okayButton: '.pointer.footer-green',
   makerCheckerDialog: '.makerchecker-popup.p-dialog',
   samePermanentAddressCheckbox: '#samePermanentFlag, input[name="samePermanentFlag"]',
+  currentAddressInput: 'input[name="currentAddress"], input[id="currentAddress"], input[placeholder*="Current Address"]',
+
+  // Initiate KYC dialog: the new portal step that gates the inline KYC form. It
+  // asks for user type + PAN, offers Generate Form 60, and on the PAN path adds a
+  // "Choose KYC Method" step where OVD must always be chosen over DigiLocker
+  // (DigiLocker needs an interactive consent journey). Options are matched by text
+  // in code, so only the structural hooks live here.
+  kycDialog: '.kyc-dialog',
+  kycDialogInitiateContent: '.kyc-dialog .kyc-content',
+  kycDialogMethodContent: '.kyc-dialog .kyc-method',
+  kycDialogPanInput: '.kyc-dialog #panNumber',
+  kycDialogProceedBtn: '.kyc-dialog button.proceed-btn',
 };
 
 const ORIENTAL_URLS = {
@@ -2421,6 +2683,8 @@ Object.assign(globalThis, {
   uploadFileObject,
   generateForm60Pdf,
   selectPrimeAutocomplete,
+  fillManualVehicleDetails,
+  findManualVehiclePrompt,
   fillMuiDate,
   fetchOTPWithRetry,
   fillOTP,

@@ -1051,6 +1051,80 @@ await wait(125);
     return true;
   },
 
+  // Drops salutations and punctuation so a cosmetic "Mr" prefix is not read as a
+  // real difference between the portal's KYC name and the one in the request.
+  nameParts(value) {
+    const titles = ['MR', 'MRS', 'MS', 'MISS', 'SHRI', 'SHRIMATI', 'SMT', 'DR', 'M/S', 'MST'];
+    return String(value || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toUpperCase()
+      .split(' ')
+      .map((part) => part.replace(/[^A-Z]/g, ''))
+      .filter((part) => part && !titles.includes(part));
+  },
+
+  /**
+   * Makes the portal's full name match the request. The field is disabled and
+   * filled from the KYC record stored at Form 60 / OVD, which regularly drops a
+   * middle name. The request is the source of truth, so a difference unlocks the
+   * field and overwrites it instead of failing the run.
+   */
+  async applyFullName(root, fullName, logger = console.log) {
+    if (!fullName) return;
+    const nameInput = this.findVisibleElement(ORIENTAL_SELECTORS.fullNameInput, root);
+    if (!nameInput) {
+      logger('Full name input not found on personal details - name left as the portal had it');
+      return;
+    }
+    const portalName = String(nameInput.value || '').trim();
+    if (this.nameParts(portalName).join(' ') === this.nameParts(fullName).join(' ')) {
+      logger('Portal full name matches request: "' + portalName + '"');
+      return;
+    }
+    logger('Full name mismatch - replacing portal name "' + (portalName || '(empty)') + '" with "' + fullName + '"');
+    const applied = await fillLockedInput(nameInput, fullName);
+    if (!applied) {
+      throw new Error('KYC full name did not retain "' + fullName + '" after unlocking (portal kept "' + (String(nameInput.value || '') || '(empty)') + '")');
+    }
+    logger('Full name set from request: "' + fullName + '"');
+  },
+
+  /**
+   * Ticks "Same as Permanent" so the portal copies the permanent address into the
+   * Current Address block. Without it the slide fails Continue with "Please enter
+   * Current Address" / "Please enter current State".
+   */
+  async applySameAsPermanent(root, address, logger = console.log) {
+    const checkbox = this.findVisibleElement(ORIENTAL_SELECTORS.samePermanentAddressCheckbox, root);
+    if (!checkbox) {
+      logger('"Same as Permanent" checkbox not found - current address left to the portal');
+      return;
+    }
+    if (!(await setCheckboxChecked(checkbox, true))) {
+      throw new Error('Could not select "Same as Permanent" address');
+    }
+    logger('Selected "Same as Permanent" for the current address');
+    await wait(250);
+
+    const currentAddress = this.findVisibleElement(ORIENTAL_SELECTORS.currentAddressInput, root);
+    if (!currentAddress) return;
+    if (String(currentAddress.value || '').trim()) return;
+
+    // The copy runs in a React effect; one re-toggle settles it when it does not land.
+    logger('Current address still empty after "Same as Permanent" - re-toggling');
+    await setCheckboxChecked(checkbox, false);
+    await wait(200);
+    await setCheckboxChecked(checkbox, true);
+    await wait(400);
+    if (String(currentAddress.value || '').trim()) return;
+
+    logger('Portal never copied the address - filling the current address from the request');
+    if (address && !(await fillLockedInput(currentAddress, address))) {
+      throw new Error('Current address could not be populated');
+    }
+  },
+
   async fillPersonalDetails(kycData, logger = console.log) {
     const p = kycData?.customerDetails || kycData;
     const addr = p.address || {};
@@ -1079,8 +1153,7 @@ await wait(125);
       addr.pincode || p.pincode
     ].filter(Boolean).join(', ');
 
-    const nameInput = this.findVisibleElement(ORIENTAL_SELECTORS.fullNameInput, root, { allowDisabled: false });
-    if (nameInput && fullName) fillInput(nameInput, fullName);
+    await this.applyFullName(root, fullName, logger);
 
     const mobileInput = this.findVisibleElement(ORIENTAL_SELECTORS.mobileNumberInput, root, { allowDisabled: false });
     if (mobileInput && mobileValue) fillInput(mobileInput, mobileValue);
@@ -1094,8 +1167,24 @@ await wait(125);
     const emailInput = this.findVisibleElement(ORIENTAL_SELECTORS.emailInput, root, { allowDisabled: false });
     if (emailInput) fillInput(emailInput, otpEmail);
 
-    const permanentAddressInput = this.findVisibleElement(ORIENTAL_SELECTORS.permanentAddressInput, root, { allowDisabled: false });
-    if (permanentAddressInput && address) fillInput(permanentAddressInput, address);
+    // Clear "Same as Permanent" first: an already-ticked box holds a stale copy of
+    // the address, and the portal only re-copies on the next tick.
+    const sameAsPermanent = this.findVisibleElement(ORIENTAL_SELECTORS.samePermanentAddressCheckbox, root);
+    if (sameAsPermanent && sameAsPermanent.checked) {
+      await setCheckboxChecked(sameAsPermanent, false);
+      await wait(150);
+    }
+
+    const permanentAddressInput = this.findVisibleElement(ORIENTAL_SELECTORS.permanentAddressInput, root);
+    if (permanentAddressInput && address) {
+      if (permanentAddressInput.disabled || permanentAddressInput.readOnly) {
+        if (!(await fillLockedInput(permanentAddressInput, address))) {
+          throw new Error('Permanent address did not retain the supplied customer address');
+        }
+      } else {
+        fillInput(permanentAddressInput, address);
+      }
+    }
 
     const state = addr.state || p.state;
     const city = addr.city || p.city;
@@ -1109,6 +1198,9 @@ await wait(125);
       await fillPrimeDropdownByLabel("Pincode", pincode);
       await wait(50);
     }
+
+    // Tick it only now, so the portal copies the corrected permanent address.
+    await this.applySameAsPermanent(root, address, logger);
 
     // Date of Birth
     const dobInput = this.findVisibleElement("input[name='dob']", root);
