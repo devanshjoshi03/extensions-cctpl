@@ -372,7 +372,7 @@ const SompoProposalDetails = {
   // are written completely.
   // ═══════════════════════════════════════════════════════════════
 
-  async fillInputCharByChar(inp, value, fieldLabel, logger = console.log) {
+  async fillInputCharByChar(inp, value, fieldLabel, logger = console.log, options = {}) {
     // 1. Remove DOM maxlength attribute
     const originalMaxLen = inp.getAttribute('maxlength');
     if (originalMaxLen) {
@@ -449,13 +449,20 @@ const SompoProposalDetails = {
     inp.blur();
     inp.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
 
-    const finalLen = inp.value.length;
+    const finalValue = String(inp.value || '');
+    const finalLen = finalValue.length;
     const expectedLen = value.length;
-    if (finalLen < expectedLen) {
-      logger('⚠️ ' + fieldLabel + ': STILL truncated to ' + finalLen + '/' + expectedLen + ' chars — field may enforce server-side limit');
-    } else {
-      logger('✅ ' + fieldLabel + ' → "' + inp.value.substring(0, 60) + (inp.value.length > 60 ? '...' : '') + '" (' + finalLen + ' chars)');
+    if (finalValue.trim() !== value.trim()) {
+      // A required field the portal refused is worth stopping for: carrying on
+      // only moves the failure to a later step that cannot explain it.
+      const detail = fieldLabel + ' was not retained by the portal: sent "' + value
+        + '", field kept "' + (finalValue || '(empty)') + '" (' + finalLen + '/' + expectedLen + ' chars)';
+      if (options.required) throw new Error(detail);
+      logger('⚠️ ' + detail);
+      return false;
     }
+    logger('✅ ' + fieldLabel + ' → "' + finalValue.substring(0, 60) + (finalLen > 60 ? '...' : '') + '" (' + finalLen + ' chars)');
+    return true;
   },
 
   async _fillAddressInBand(bandTop, bandBot, sectionName, address1, address2, landmark, city, state, country, pincode, logger) {
@@ -822,15 +829,28 @@ const SompoProposalDetails = {
     await wait(200);
 
     // ── Financer Name ──────────────────────────────────────────────
-    const financierName = hyp.financierName || '';
-    if (financierName) {
+    const rawFinancierName = String(hyp.financierName || '').trim();
+    if (rawFinancierName) {
+      // The portal mangles '&' and rejects leading/trailing punctuation, so the
+      // value is normalised before it goes in. A rewritten name is still a
+      // changed name, so the difference is logged rather than applied quietly.
+      const financierName = rawFinancierName
+        .replace(/&/g, 'And')
+        .replace(/^[^A-Za-z0-9]+/, '')
+        .replace(/[^A-Za-z0-9)]+$/, '')
+        .trim();
+      if (!financierName) {
+        throw new Error('hypothecation.financierName holds no usable name (request sent "' + rawFinancierName + '")');
+      }
+      if (financierName !== rawFinancierName) {
+        logger('⚠️ Financer Name normalised: request sent "' + rawFinancierName + '", filling "' + financierName + '"');
+      }
       logger('🔍 Financer Name: "' + financierName + '" (' + financierName.length + ' chars)');
       const finNameInp = this._findInputInSection('Financer Name', 'Financier Name', 'financer name', 'financier name');
-      if (finNameInp) {
-        await this.fillInputCharByChar(finNameInp, financierName, 'Financer Name', logger);
-      } else {
-        logger('⚠️ Financer Name input not found');
+      if (!finNameInp) {
+        throw new Error('Financer Name input never appeared in the Hypothecation section');
       }
+      await this.fillInputCharByChar(finNameInp, financierName, 'Financer Name', logger, { required: true });
       await wait(150);
     }
 
@@ -840,7 +860,9 @@ const SompoProposalDetails = {
       logger('🔍 Financer Address: "' + financierAddress + '" (' + financierAddress.length + ' chars)');
       const finAddrInp = this._findInputInSection('Financer Address', 'Financier Address', 'financer address', 'financier address');
       if (finAddrInp) {
-        await this.fillInputCharByChar(finAddrInp, financierAddress, 'Financer Address', logger);
+        // The Playwright target verifies this field too; a cleared address is
+        // just as fatal at the Proceed button as a cleared name.
+        await this.fillInputCharByChar(finAddrInp, financierAddress, 'Financer Address', logger, { required: true });
       } else {
         logger('⚠️ Financer Address input not found');
       }
