@@ -267,6 +267,69 @@ await wait(125);
     return String(premiumEl.textContent || '').replace(/[^\d.]/g, '');
   },
 
+  /**
+   * Reads the Form 60 dialog's field-level validation and pairs each message with
+   * the field it belongs to, so a failure names what the portal objected to
+   * ("Sur Name: Invalid name (min 2 chars...)") instead of just reporting that
+   * the dialog would not close. Mirrors logForm60ValidationErrors in the
+   * Playwright target.
+   */
+  readForm60ValidationErrors(dialog) {
+    const scope = dialog || this.getVisibleForm60Dialog();
+    if (!scope) return [];
+
+    const isShown = (node) => {
+      if (!node.getClientRects().length) return false;
+      const style = window.getComputedStyle(node);
+      return style.display !== 'none' && style.visibility !== 'hidden';
+    };
+    const fieldOf = (node) => node.closest('.did-floating-label-content, .col-md-6, .col-md-12');
+    const labelFor = (node) => {
+      const field = fieldOf(node);
+      const label = field?.querySelector('label')?.textContent?.replace(/\s+/g, ' ').trim();
+      if (label) return label;
+      const input = field?.querySelector('input, select, textarea');
+      return (input && input.getAttribute('name')) || '';
+    };
+
+    const found = [];
+    const describedFields = new Set();
+
+    for (const node of scope.querySelectorAll('.error-msg, .error-message, .p-error')) {
+      const message = String(node.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!message || !isShown(node)) continue;
+      const field = fieldOf(node);
+      if (field) describedFields.add(field);
+      const label = labelFor(node);
+      found.push(label ? label + ': ' + message : message);
+    }
+
+    // Fields the portal outlined in red without printing a reason.
+    for (const node of scope.querySelectorAll('.input-border-error')) {
+      if (!isShown(node)) continue;
+      const field = fieldOf(node);
+      if (field && describedFields.has(field)) continue;
+      const label = labelFor(node) || node.getAttribute('name') || 'unknown field';
+      found.push(label + ': rejected by the portal (no message shown)');
+    }
+
+    return Array.from(new Set(found));
+  },
+
+  // Mirrors sanitizeName in the Playwright target.
+  sanitizeName(value) {
+    const cleaned = String(value == null ? '' : value).trim();
+    if (!cleaned || cleaned === '.' || cleaned === '-' || cleaned === '_' || /^[^a-zA-Z]+$/.test(cleaned)) {
+      return '';
+    }
+    // Oriental's Form 60 rejects a one-character name ("min 2 chars"), but a
+    // single-letter surname or initial is a real name plenty of people have.
+    // A trailing space satisfies the portal's length rule without inventing a
+    // letter, and every name comparison here collapses whitespace.
+    if (cleaned.length === 1) return cleaned + ' ';
+    return cleaned;
+  },
+
   async resolveForm60Payload(customer) {
     const form60 = customer?.form60 || {};
     const addr = customer?.address || {};
@@ -276,14 +339,14 @@ await wait(125);
 
     return {
       fatherTitleCandidates: this.resolveFatherTitleCandidates(customer, form60),
-      firstName: form60.firstName || customer?.firstName || '',
-      middleName: form60.middleName || customer?.middleName || '',
-      surName: form60.surName || form60.surname || customer?.lastName || customer?.surName || '',
+      firstName: this.sanitizeName(form60.firstName || customer?.firstName),
+      middleName: this.sanitizeName(form60.middleName || customer?.middleName),
+      surName: this.sanitizeName(form60.surName || form60.surname || customer?.lastName || customer?.surName),
       email: otpCfg.email || ORIENTAL_DEFAULT_VALUES.email,
       dob: this.formatDateValue(form60.dateOfBirth || customer?.dateOfBirth),
-      fatherFirstName: form60.fatherFirstName || customer?.fatherFirstName || '',
-      fatherMiddleName: form60.fatherMiddleName || customer?.fatherMiddleName || '',
-      fatherSurName: form60.fatherSurName || form60.fatherSurname || customer?.fatherSurName || customer?.fatherLastName || '',
+      fatherFirstName: this.sanitizeName(form60.fatherFirstName || customer?.fatherFirstName),
+      fatherMiddleName: this.sanitizeName(form60.fatherMiddleName || customer?.fatherMiddleName),
+      fatherSurName: this.sanitizeName(form60.fatherSurName || form60.fatherSurname || customer?.fatherSurName || customer?.fatherLastName),
       roomNo: form60.roomNo || form60.flatRoomNo || addr.building || customer?.building || '',
       floorNo: form60.floorNo || customer?.floorNo || '',
       nameOfPremises: form60.nameOfPremises || addr.building || customer?.building || '',
@@ -982,6 +1045,10 @@ await wait(125);
     let closed = approvalDialogVisible ? true : await this.waitForForm60DialogToClose(5000);
     if (!closed) {
       const activeDialog = this.getVisibleForm60Dialog() || dialog;
+      const firstErrors = this.readForm60ValidationErrors(activeDialog);
+      if (firstErrors.length) {
+        logger('Form 60 validation: ' + firstErrors.join(' | '));
+      }
 
       // Re-check and fill any dropdowns that are still empty
       if (!this.isDialogDropdownSelected(activeDialog, '#title')) {
@@ -1007,6 +1074,14 @@ await wait(125);
 
       approvalDialogVisible = await this.waitForApprovalOtpDialog(2400);
       if (!approvalDialogVisible) {
+        // The fields have been refilled once, so a complaint that is still
+        // standing is about the data itself - a name carrying characters the
+        // portal rejects, most often. Report it rather than resubmitting and
+        // failing on a vaguer message later.
+        const standingErrors = this.readForm60ValidationErrors();
+        if (standingErrors.length) {
+          throw new Error('Form 60 was not accepted by Oriental: ' + standingErrors.join(' | '));
+        }
         await this.setOtpSinceNow();
         clickElement(submitButton);
         await wait(200);
@@ -1015,8 +1090,11 @@ await wait(125);
     }
 
     if (!closed) {
-      logger('⚠️ Form 60 dialog did not close after submit');
-      return false;
+      const errors = this.readForm60ValidationErrors();
+      throw new Error(
+        'Form 60 was not accepted by Oriental'
+        + (errors.length ? ': ' + errors.join(' | ') : ' (no field error shown)')
+      );
     }
 
     const otpApproved = await this.handleForm60OtpApproval(logger);
