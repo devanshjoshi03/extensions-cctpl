@@ -99,7 +99,6 @@
       'customerDetails',
       'agentDetails',
       'nominee',
-      'hypothecation',
     ];
 
     const missing = requiredObjects.filter((key) => {
@@ -120,7 +119,11 @@
       customerDetails: rawPayload.customerDetails,
       agentDetails: rawPayload.agentDetails,
       nominee: rawPayload.nominee,
-      hypothecation: rawPayload.hypothecation,
+      // Hypothecation is optional.  Older lead payloads do not include this
+      // object; treat those as non-hypothecated so the ICICI flow can proceed.
+      hypothecation: rawPayload.hypothecation && typeof rawPayload.hypothecation === 'object' && !Array.isArray(rawPayload.hypothecation)
+        ? rawPayload.hypothecation
+        : { isHypothecated: false },
       externalId: rawPayload.externalId,
       uploadedFiles: rawPayload.uploadedFiles,
       policyFiles: rawPayload.policyFiles,
