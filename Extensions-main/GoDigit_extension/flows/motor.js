@@ -65,8 +65,16 @@ const GoDigitMotorFlow = {
     if (customer.city) await this.selectAutocomplete('#city', customer.city, 'Customer city');
     if (customer.pincode) await this.selectAutocomplete('#pincode', customer.pincode, 'Customer pincode');
 
-    await this.submitQuote(payload, logger);
-    return { success: true, formFilled: true, quoteSubmitted: true, bharatRegistration };
+    const policy = await this.submitQuote(payload, logger);
+    return {
+      success: true,
+      formFilled: true,
+      quoteSubmitted: true,
+      policyGenerated: true,
+      policyNumber: policy.policyNumber,
+      premium: policy.premium,
+      bharatRegistration
+    };
   },
   async navigateToMotorFromHome(logger) {
     const isVisible = (element) => element &&
@@ -211,6 +219,58 @@ const GoDigitMotorFlow = {
     }
     if (Date.now() >= deadline) throw new Error('Timed out waiting for Go Digit Get Quote loading to complete');
     await this.fillQuoteDetails(payload, logger);
+    return this.generatePolicy(logger);
+  },
+  async generatePolicy(logger) {
+    await this.selectOption(
+      'select[name="paymentMode"], select[formcontrolname="paymentMode"]',
+      'AGENT_FLOAT',
+      'Agent Float payment mode'
+    );
+    logger('Selected Agent Float payment mode.');
+
+    const premiumElement = await this.waitForCondition(
+      () => this.findVisibleElement('#breakdown_amount .premium_txt'),
+      'Go Digit final premium was not visible before generating the policy',
+      15000
+    );
+    const premium = premiumElement.textContent.replace(/\s+/g, ' ').trim();
+    if (!premium) throw new Error('Go Digit final premium was blank before generating the policy');
+
+    const findGeneratePolicyButton = () => [...document.querySelectorAll('button[type="submit"]')]
+      .find((button) => button.offsetParent !== null &&
+        this.normalize(button.textContent) === 'generate policy' &&
+        !button.disabled);
+    const button = await this.waitForCondition(
+      findGeneratePolicyButton,
+      'Go Digit Generate Policy button was not enabled after selecting Agent Float',
+      20000
+    );
+    await AutomationPauseController.checkpoint('Generate Policy');
+    button.click();
+    logger('Clicked Generate Policy; waiting for policy generation to finish.');
+
+    let loadingSeen = false;
+    const successView = await this.waitForCondition(() => {
+      const success = this.findVisibleElement('app-motor-success');
+      if (success) return success;
+      const loading = this.findVisibleElement('app-motorinsurance-new .loader-gif');
+      if (loading && !loadingSeen) {
+        loadingSeen = true;
+        logger('Go Digit policy generation is loading.');
+      }
+      return null;
+    }, 'Go Digit policy generation did not reach the policy success screen', 120000);
+
+    const policyNumber = await this.waitForCondition(() => {
+      const details = [...successView.querySelectorAll('.forPolicyDetails')]
+        .find((element) => this.normalize(element.textContent).includes('policy number'));
+      const label = details?.querySelector('.forLabel');
+      return label?.textContent.replace(/\s+/g, ' ').trim().split(' ')[0] || null;
+    }, 'Go Digit policy success screen did not show a policy number', 10000);
+
+    logger(`Policy ${policyNumber} generated; final premium ${premium}.`);
+    return { policyNumber, premium };
   },
   async fillQuoteDetails(payload, logger) {
     const vehicle = payload?.vehicleDetails || {};

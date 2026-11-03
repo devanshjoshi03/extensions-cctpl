@@ -61,7 +61,10 @@
       }
       const result = await GoDigitMotorFlow.run(runState.payload, report);
       await window.GoDigitSetRun({ ...runState, active: false, phase: 'complete' });
-      AutomationPauseController.complete(result.quoteSubmitted ? 'Quote and customer details filled' : result.success ? 'Vehicle details filled' : 'Vehicle flow failed');
+      const completionMessage = result.policyGenerated
+        ? `Policy ${result.policyNumber} generated | Premium ${result.premium}`
+        : result.quoteSubmitted ? 'Quote and customer details filled' : result.success ? 'Vehicle details filled' : 'Vehicle flow failed';
+      AutomationPauseController.complete(completionMessage);
     } catch (error) {
       await window.GoDigitSetRun({ ...runState, active: false, phase: 'vehicle-failed' });
       AutomationPauseController.complete(error.message);
